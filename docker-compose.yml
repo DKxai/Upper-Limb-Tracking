@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: arm_tracking_db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: arm_tracking
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpassword
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - tsdb_data:/var/lib/postgresql/data
+
+volumes:
+  tsdb_data:

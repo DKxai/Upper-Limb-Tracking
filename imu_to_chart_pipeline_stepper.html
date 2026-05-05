@@ -1,0 +1,339 @@
+
+<h2 class="sr-only">Pipeline tương tác từ dữ liệu thô IMU (acc + gyro) đến biểu đồ lâm sàng, gồm 6 bước có code Python</h2>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.wrap{padding:1rem 0;font-family:var(--font-sans)}
+.stepper-dots{display:flex;gap:6px;justify-content:center;margin-bottom:18px;flex-wrap:wrap}
+.dot{width:28px;height:6px;border-radius:3px;background:var(--color-border-tertiary);cursor:pointer;transition:background .2s}
+.dot.active{background:#378ADD}
+.dot.done{background:#1D9E75}
+.panel{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1.25rem}
+.step-badge{display:inline-block;font-size:11px;font-weight:500;padding:3px 10px;border-radius:20px;margin-bottom:8px}
+.step-title{font-size:16px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px}
+.step-why{font-size:13px;color:var(--color-text-secondary);margin-bottom:14px;line-height:1.5}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.col-label{font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+.formula-box{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px;font-size:12px;color:var(--color-text-primary);line-height:1.7;font-family:var(--font-mono)}
+.code-box{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px;font-size:11px;color:var(--color-text-primary);line-height:1.6;font-family:var(--font-mono);overflow-x:auto;white-space:pre}
+.output-tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;margin-bottom:8px}
+.warn-box{background:var(--color-background-warning);border-radius:var(--border-radius-md);padding:8px 12px;font-size:12px;color:var(--color-text-warning);margin-top:10px;line-height:1.5}
+.nav-row{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+.nav-btn{font-size:13px;padding:6px 18px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:transparent;color:var(--color-text-primary);cursor:pointer}
+.nav-btn:disabled{opacity:.35;cursor:default}
+.step-count{font-size:12px;color:var(--color-text-secondary)}
+.highlight{color:#185FA5;font-weight:500}
+.ok{color:#1D9E75;font-weight:500}
+@media(max-width:500px){.two-col{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+<div class="stepper-dots" id="dots"></div>
+<div class="panel" id="panel"></div>
+<div class="nav-row">
+  <button class="nav-btn" id="btn-prev" onclick="go(-1)">Trước</button>
+  <span class="step-count" id="step-count"></span>
+  <button class="nav-btn" id="btn-next" onclick="go(1)">Tiếp theo</button>
+</div>
+</div>
+
+<script>
+const STEPS = [
+{
+  badge:'Bước 0', badgeColor:'#E6F1FB', badgeText:'#0C447C',
+  title:'Dữ liệu thô từ IMU',
+  why:'Mỗi node IMU xuất ra 6 kênh liên tục theo thời gian. Đây là điểm xuất phát — chưa dùng được để vẽ biểu đồ lâm sàng ngay.',
+  left_label:'Cấu trúc dữ liệu thô',
+  left:`<span class="highlight">Mỗi node × mỗi timestep:</span>
+acc_x, acc_y, acc_z  → m/s²
+gyro_x, gyro_y, gyro_z → rad/s
+
+<span class="highlight">6 node tổng cộng:</span>
+L_shoulder, L_elbow, L_wrist
+R_shoulder, R_elbow, R_wrist
+
+Tần số thường dùng:
+  Lâm sàng nhẹ: 50–100 Hz
+  Phân tích chi tiết: 200 Hz`,
+  right_label:'Code đọc dữ liệu',
+  right:`import pandas as pd
+import numpy as np
+
+# Giả sử CSV có cột:
+# t, acc_x, acc_y, acc_z,
+#    gyro_x, gyro_y, gyro_z
+df = pd.read_csv('L_elbow.csv')
+dt = 1 / 100  # 100 Hz
+
+acc = df[['acc_x','acc_y','acc_z']].values
+gyro = df[['gyro_x','gyro_y','gyro_z']].values`,
+  output:null, outputColor:null,
+  warn:null
+},
+{
+  badge:'Bước 1', badgeColor:'#E1F5EE', badgeText:'#085041',
+  title:'Lọc nhiễu — Low-pass filter',
+  why:'acc và gyro raw rất ồn (nhiễu điện, rung cơ học). Phải lọc trước khi tính bất cứ thứ gì. Dùng Butterworth low-pass: giữ tần số chuyển động thật (< 20 Hz), cắt nhiễu cao tần.',
+  left_label:'Công thức lọc Butterworth',
+  left:`Bộ lọc bậc N, tần số cắt fc:
+
+H(s) = 1 / B_N(s/ωc)
+
+Trong code: scipy.signal
+  - order = 4 (bậc 4 là đủ)
+  - fc = 20 Hz (cắt ở 20 Hz)
+  - fs = tần số sampling
+
+<span class="highlight">Lọc riêng từng trục:</span>
+acc_x_filt = filter(acc_x)
+acc_y_filt = filter(acc_y)
+acc_z_filt = filter(acc_z)
+(tương tự cho gyro)`,
+  right_label:'Code Python',
+  right:`from scipy.signal import butter, filtfilt
+
+def lowpass(data, fc=20, fs=100, order=4):
+    nyq = fs / 2
+    b, a = butter(order, fc/nyq, 'low')
+    return filtfilt(b, a, data, axis=0)
+
+acc_f  = lowpass(acc,  fc=20, fs=100)
+gyro_f = lowpass(gyro, fc=20, fs=100)
+
+# gyro dùng fc thấp hơn nếu
+# chỉ quan tâm chuyển động chậm:
+gyro_slow = lowpass(gyro, fc=5, fs=100)`,
+  output:'Xuất ra: acc_f[N,3], gyro_f[N,3] — đã lọc', outputColor:'#1D9E75',
+  warn:'Nếu bỏ bước này: góc khớp tính ra sẽ nhảy loạn, SPARC sẽ luôn âm lớn dù chuyển động bình thường.'
+},
+{
+  badge:'Bước 2', badgeColor:'#EEEDFE', badgeText:'#3C3489',
+  title:'Tính hướng (orientation) — Quaternion / Euler',
+  why:'gyro cho tốc độ quay (rad/s), ta cần tích phân để ra góc tuyệt đối. Nhưng tích phân gyro bị drift. Kết hợp acc (đo hướng trọng lực) để hiệu chỉnh. Kết quả: hướng của từng node trong không gian.',
+  left_label:'Madgwick filter — công thức cốt lõi',
+  left:`q = quaternion [w, x, y, z]
+
+Cập nhật mỗi bước dt:
+  q̇ = 0.5 × q ⊗ [0, ω]
+
+Hiệu chỉnh bằng acc:
+  gradient descent trên hàm lỗi
+  f(q) = q* ⊗ g ⊗ q − a_norm
+
+β = gain (0.01–0.1)
+  lớn → phản ứng nhanh, rung nhiều
+  nhỏ → mượt, lag nhiều hơn
+
+<span class="highlight">→ Ra: roll, pitch, yaw</span>
+(hoặc quaternion để tính góc khớp)`,
+  right_label:'Code Python (ahrs library)',
+  right:`# pip install ahrs
+from ahrs.filters import Madgwick
+
+madgwick = Madgwick(frequency=100, beta=0.033)
+
+N = len(acc_f)
+Q = np.zeros((N, 4))
+Q[0] = [1, 0, 0, 0]  # khởi tạo
+
+for i in range(1, N):
+    Q[i] = madgwick.updateIMU(
+        Q[i-1],
+        gyr=gyro_f[i],
+        acc=acc_f[i]
+    )
+
+# Chuyển quaternion → Euler (độ)
+from ahrs.common import Quaternion
+euler = np.array([
+    Quaternion(Q[i]).to_angles()
+    for i in range(N)
+]) * 180/np.pi  # → roll,pitch,yaw`,
+  output:'Xuất ra: Q[N,4] quaternion — hoặc euler[N,3] (roll, pitch, yaw) mỗi node', outputColor:'#7F77DD',
+  warn:null
+},
+{
+  badge:'Bước 3', badgeColor:'#FAEEDA', badgeText:'#633806',
+  title:'Tính góc khớp (joint angle)',
+  why:'Góc khớp = góc giữa 2 segment liên tiếp. Cần quaternion của CẢ HAI node hai đầu khớp để tính. Không thể tính từ 1 node đơn lẻ.',
+  left_label:'Công thức góc khớp',
+  left:`Khớp khuỷu:
+  node_proximal = L_shoulder (q_s)
+  node_distal   = L_elbow    (q_e)
+
+Quaternion tương đối:
+  q_rel = q_s* ⊗ q_e
+  (* = conjugate)
+
+Góc khớp:
+  θ = 2 × arccos(|q_rel.w|)
+  (đơn vị radian → × 180/π = độ)
+
+<span class="highlight">Làm cho 2 khớp:</span>
+  vai-khuỷu: q_shoulder* ⊗ q_elbow
+  khuỷu-cổ tay: q_elbow* ⊗ q_wrist`,
+  right_label:'Code Python',
+  right:`def quat_mult(q1, q2):
+    w1,x1,y1,z1 = q1
+    w2,x2,y2,z2 = q2
+    return np.array([
+      w1*w2-x1*x2-y1*y2-z1*z2,
+      w1*x2+x1*w2+y1*z2-z1*y2,
+      w1*y2-x1*z2+y1*w2+z1*x2,
+      w1*z2+x1*y2-y1*x2+z1*w2])
+
+def joint_angle(Q_prox, Q_dist):
+    angles = []
+    for i in range(len(Q_prox)):
+        qc = np.array([Q_prox[i,0],
+             -Q_prox[i,1],
+             -Q_prox[i,2],
+             -Q_prox[i,3]])  # conjugate
+        qr = quat_mult(qc, Q_dist[i])
+        w = np.clip(qr[0], -1, 1)
+        angles.append(2*np.arccos(abs(w)))
+    return np.degrees(np.array(angles))
+
+angle_elbow = joint_angle(Q_shoulder, Q_elbow)
+angle_wrist = joint_angle(Q_elbow, Q_wrist)`,
+  output:'Xuất ra: angle_elbow[N], angle_wrist[N] — đơn vị độ → VẼ ĐƯỢC biểu đồ Góc khớp', outputColor:'#BA7517',
+  warn:null
+},
+{
+  badge:'Bước 4', badgeColor:'#E1F5EE', badgeText:'#085041',
+  title:'Tính vận tốc góc & vận tốc tuyến tính',
+  why:'Vận tốc góc của khớp = đạo hàm của góc khớp. Vận tốc tuyến tính của đầu cổ tay (endpoint) tính từ kinematics hoặc tích phân acc. Từ đây ra Peak velocity, Phase Portrait, và SPARC.',
+  left_label:'Hai cách tính vận tốc',
+  left:`<span class="highlight">Cách 1 — Đạo hàm góc (đơn giản):</span>
+ω(t) = Δθ / Δt
+  = (θ[i] - θ[i-1]) / dt
+
+Lọc lại sau đạo hàm (nhiễu khuếch đại)
+→ Dùng cho: vận tốc góc khớp
+
+<span class="highlight">Cách 2 — Tích phân acc (endpoint):</span>
+v(t) = v(t-1) + acc_world(t) × dt
+  acc_world = R(q) × acc_body − g
+
+Trừ trọng lực trước khi tích phân!
+→ Dùng cho: vận tốc cổ tay (m/s)
+
+Peak velocity = max(|v(t)|)`,
+  right_label:'Code Python',
+  right:`# Cách 1: đạo hàm góc khớp
+omega = np.gradient(angle_elbow, dt)
+omega_f = lowpass(omega.reshape(-1,1),
+          fc=10, fs=100).flatten()
+
+# Cách 2: vận tốc tuyến tính cổ tay
+# Cần xoay acc về frame thế giới
+from scipy.spatial.transform import Rotation
+
+vel = np.zeros(3)
+v_wrist = []
+g = np.array([0, 0, 9.81])
+
+for i in range(N):
+    R = Rotation.from_quat(
+        Q_wrist[i,[1,2,3,0]])  # scipy: xyzw
+    acc_world = R.apply(acc_f[i]) - g
+    vel = vel + acc_world * dt
+    v_wrist.append(np.linalg.norm(vel))
+
+v_wrist = lowpass(
+    np.array(v_wrist).reshape(-1,1),
+    fc=10).flatten()
+peak_vel = np.max(v_wrist)`,
+  output:'Xuất ra: omega[N], v_wrist[N], peak_vel → VẼ ĐƯỢC Time-series vận tốc + Phase Portrait', outputColor:'#1D9E75',
+  warn:'Tích phân acc bị drift nhanh. Chỉ dùng trong cửa sổ ngắn (< 5 giây mỗi lần). Nếu muốn vận tốc dài hơn, dùng zero-velocity update (ZUPT) khi tay đứng yên.'
+},
+{
+  badge:'Bước 5', badgeColor:'#FAECE7', badgeText:'#712B13',
+  title:'Tính SPARC, Jerk — rồi vẽ biểu đồ',
+  why:'Từ v_wrist sẵn có, tính thêm 2 chỉ số smoothness. Jerk = đạo hàm bậc 3 của vị trí = đạo hàm của acceleration. SPARC = arc length trên phổ tần số của vận tốc chuẩn hóa.',
+  left_label:'Công thức SPARC & Jerk',
+  left:`<span class="highlight">Jerk (đơn giản):</span>
+j(t) = Δa / Δt ≈ Δ²v / Δt²
+  = np.gradient(np.gradient(v))
+
+Spike trong j(t) → giật cục
+
+<span class="highlight">SPARC (arc length phổ):</span>
+1. Chuẩn hóa: v̂ = v / max(|v|)
+2. FFT: V = fft(v̂)
+3. Tính arc length:
+   L = -∫₀^ωc √((1/ωc)²+|dV/dω|²)dω
+
+Kết quả: SPARC ∈ (-∞, 0)
+  -1 → -2 : mượt (bình thường)
+  < -2.5  : bắt đầu có vấn đề`,
+  right_label:'Code Python + vẽ biểu đồ',
+  right:`import matplotlib.pyplot as plt
+
+# Jerk
+jerk = np.gradient(np.gradient(
+    v_wrist, dt), dt)
+
+# SPARC (đơn giản hóa)
+from numpy.fft import rfft, rfftfreq
+v_norm = v_wrist / (np.max(np.abs(v_wrist))+1e-8)
+V = np.abs(rfft(v_norm))
+freqs = rfftfreq(N, dt)
+fc = 20.0
+mask = freqs <= fc
+dV = np.gradient(V[mask], freqs[mask])
+arc = np.sqrt((1/fc)**2 + dV**2)
+sparc = -np.trapz(arc, freqs[mask])
+
+# Vẽ Phase Portrait
+theta = angle_elbow         # trục X
+omega = np.gradient(theta,dt) # trục Y
+plt.plot(theta, omega)
+plt.xlabel('Góc khuỷu (°)')
+plt.ylabel('Vận tốc góc (°/s)')`,
+  output:'Tất cả biểu đồ lâm sàng đã sẵn sàng: Time-series, Góc khớp, Phase Portrait, SPARC, Jerk', outputColor:'#1D9E75',
+  warn:null
+}
+];
+
+let cur = 0;
+
+function renderDots() {
+  const c = document.getElementById('dots');
+  c.innerHTML = STEPS.map((s,i)=>
+    `<div class="dot ${i===cur?'active':i<cur?'done':''}" onclick="jumpTo(${i})" title="${s.title}"></div>`
+  ).join('');
+}
+
+function renderPanel() {
+  const s = STEPS[cur];
+  document.getElementById('step-count').textContent = `${cur+1} / ${STEPS.length}`;
+  document.getElementById('btn-prev').disabled = cur===0;
+  document.getElementById('btn-next').disabled = cur===STEPS.length-1;
+
+  document.getElementById('panel').innerHTML = `
+    <div class="step-badge" style="background:${s.badgeColor};color:${s.badgeText}">${s.badge}</div>
+    <div class="step-title">${s.title}</div>
+    <div class="step-why">${s.why}</div>
+    <div class="two-col">
+      <div>
+        <div class="col-label">${s.left_label}</div>
+        <div class="formula-box">${s.left}</div>
+      </div>
+      <div>
+        <div class="col-label">${s.right_label}</div>
+        <div class="code-box">${s.right}</div>
+      </div>
+    </div>
+    ${s.output ? `<div style="margin-top:10px"><span class="output-tag" style="background:${s.outputColor}22;color:${s.outputColor}">${s.output}</span></div>` : ''}
+    ${s.warn ? `<div class="warn-box">Lưu ý: ${s.warn}</div>` : ''}
+  `;
+}
+
+function go(dir) {
+  cur = Math.max(0, Math.min(STEPS.length-1, cur+dir));
+  renderDots(); renderPanel();
+}
+function jumpTo(i) { cur=i; renderDots(); renderPanel(); }
+
+renderDots(); renderPanel();
+</script>

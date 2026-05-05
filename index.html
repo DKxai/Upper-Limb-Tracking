@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="Arm Motion Tracking Dashboard - Real-time visualization of MPU6050 sensor data for arm movement health monitoring using ESP32 and Bluetooth">
+  <title>Arm Motion Tracking Dashboard</title>
+
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/index.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/charts.css">
+
+  <!-- Chart.js 4.x -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+  <!-- Favicon -->
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💪</text></svg>">
+</head>
+
+<body>
+  <div class="app-container" id="app">
+    <!-- ═══════════════════════════════════════ -->
+    <!--   SIDEBAR                              -->
+    <!-- ═══════════════════════════════════════ -->
+    <aside class="sidebar" id="sidebar">
+      <!-- Logo -->
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">💪</div>
+          <div class="sidebar-logo-text">
+            <span class="sidebar-logo-title">Motion Track</span>
+            <span class="sidebar-logo-subtitle">Arm Health Monitor</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="sidebar-nav">
+        <!-- Overview -->
+        <div class="sidebar-section-label">Overview</div>
+        <div class="sidebar-nav-item active" data-page="dashboard">
+          <span class="sidebar-nav-icon">📊</span>
+          <span>Dashboard</span>
+        </div>
+
+        <!-- Charts -->
+        <div class="sidebar-section-label">Charts</div>
+        <div class="sidebar-nav-item" data-page="raw-data">
+          <span class="sidebar-nav-icon">📈</span>
+          <span>Raw Sensor Data</span>
+        </div>
+        <div class="sidebar-nav-item" data-page="angle">
+          <span class="sidebar-nav-icon">📐</span>
+          <span>Angle (RPY & Joints)</span>
+        </div>
+        <div class="sidebar-nav-item" data-page="rom">
+          <span class="sidebar-nav-icon">🔄</span>
+          <span>Range of Motion</span>
+        </div>
+        <div class="sidebar-nav-item" data-page="clinical">
+          <span class="sidebar-nav-icon">🩺</span>
+          <span>Phân tích Lâm sàng</span>
+        </div>
+
+        <!-- Data -->
+        <div class="sidebar-section-label">Data</div>
+        <div class="sidebar-nav-item" data-page="data-table">
+          <span class="sidebar-nav-icon">📋</span>
+          <span>Data Table</span>
+        </div>
+        <div class="sidebar-nav-item" data-page="history">
+          <span class="sidebar-nav-icon">💾</span>
+          <span>Database History</span>
+        </div>
+
+        <!-- System -->
+        <div class="sidebar-section-label">System</div>
+        <div class="sidebar-nav-item" data-page="settings">
+          <span class="sidebar-nav-icon">⚙️</span>
+          <span>Settings</span>
+        </div>
+      </nav>
+
+      <!-- Connection Panel (Sidebar Footer) -->
+      <div class="sidebar-footer">
+        <div class="connection-panel">
+          <div class="connection-status-bar">
+            <span class="badge-dot disconnected" id="status-dot"></span>
+            <span id="status-label">Disconnected</span>
+          </div>
+          <div class="connection-info">
+            <div class="connection-info-row">
+              <span class="connection-info-label">Rate</span>
+              <span class="connection-info-value" id="sample-rate-display">— Hz</span>
+            </div>
+            <div class="connection-info-row">
+              <span class="connection-info-label">Frames</span>
+              <span class="connection-info-value" id="frame-count-display">0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ═══════════════════════════════════════ -->
+    <!--   MAIN CONTENT                         -->
+    <!-- ═══════════════════════════════════════ -->
+    <main class="main-content">
+      <!-- Header -->
+      <header class="header" id="main-header">
+        <div class="header-left">
+          <h1 class="header-title" id="header-title">Dashboard</h1>
+        </div>
+        <div class="header-right">
+          <!-- Action Buttons -->
+          <button class="btn btn-primary btn-sm" id="btn-connect" title="Kết nối qua Bluetooth Low Energy (BLE)">
+            📶 Bluetooth
+          </button>
+          <button class="btn btn-secondary btn-sm" id="btn-usb" title="Kết nối qua cáp USB Serial">
+            🔌 USB
+          </button>
+          <button class="btn btn-secondary btn-sm" id="btn-record" title="Bắt đầu ghi phiên tập vào Database (nhập tên bệnh nhân)">
+            ⏺ Record
+          </button>
+
+          <div style="width: 1px; height: 24px; background: var(--color-border); margin: 0 4px;"></div>
+
+          <button class="btn btn-ghost btn-sm" id="btn-calibrate" title="Hiệu chuẩn cảm biến - Yêu cầu đứng nghiêm, duỗi thẳng tay">
+            🔧 Calibrate
+          </button>
+          <button class="btn btn-ghost btn-sm" id="btn-reset" title="Xóa toàn bộ dữ liệu hiện tại và bắt đầu lại">
+            🔄 Reset
+          </button>
+          <button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Xuất dữ liệu ra file CSV">
+            📥 CSV
+          </button>
+          <button class="btn btn-ghost btn-sm" id="btn-export-json" title="Xuất dữ liệu ra file JSON">
+            📦 JSON
+          </button>
+        </div>
+      </header>
+
+      <!-- Dynamic Content Area -->
+      <div class="content-area" id="content-area">
+        <!-- Content rendered dynamically by DashboardView -->
+        <div class="empty-state">
+          <div class="empty-state-icon">📡</div>
+          <div class="empty-state-title">Loading Dashboard...</div>
+          <div class="empty-state-desc">Initializing components...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Application Script -->
+  <script type="module" src="js/app.js"></script>
+</body>
+
+</html>
