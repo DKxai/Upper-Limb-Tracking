@@ -1,0 +1,453 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+\chapter{Triển khai và lập trình}
+\label{chap:trienkhai}
+
+Chương~\ref{chap:thietke} đã trình bày thiết kế tổng thể của hệ thống theo dõi vận động chi trên, bao gồm kiến trúc phân lớp, phần cứng phân tán, hai chặng truyền không dây ESP-NOW/BLE và luồng xử lý tín hiệu. Chương này trình bày quá trình hiện thực hoá những thiết kế đó thành một hệ thống chạy được hoàn chỉnh từ đầu tới cuối, đồng thời làm rõ các kỹ thuật lập trình mấu chốt và cách xử lý những vấn đề kỹ thuật phát sinh trong thực tế.
+
+Hệ thống được hiện thực trên ba miền phần mềm tách biệt nhưng phối hợp chặt chẽ: (i)~\emph{firmware nút cảm biến} chạy trên ESP32-C3, chịu trách nhiệm đọc cảm biến và phát dữ liệu đúng khe thời gian; (ii)~\emph{firmware nút trung tâm} chạy trên ESP32, thu nhận, tổng hợp rồi chuyển tiếp dữ liệu lên máy tính; và (iii)~\emph{phần mềm máy chủ} chạy trên trình duyệt tại máy tính, đảm nhiệm toàn bộ khâu xử lý tín hiệu. Một nguyên tắc xuyên suốt của bản hiện thực là \textbf{tách bạch thu thập--truyền dẫn khỏi xử lý}: hai lớp firmware chỉ truyền đi \emph{dữ liệu thô} (giá trị LSB nguyên bản của MPU6050) để giữ cho nút cảm biến nhẹ về tính toán và tiết kiệm năng lượng, trong khi toàn bộ các bước hiệu chuẩn, hợp nhất cảm biến, tính góc khớp và phân tích lâm sàng được dồn về phần mềm máy chủ --- nơi có tài nguyên tính toán dồi dào và cho phép tinh chỉnh, gỡ lỗi hay nâng cấp thuật toán mà không phải nạp lại firmware cho sáu nút.
+
+Bố cục chương như sau. Mục~\ref{sec:moitruong} mô tả môi trường phát triển và việc lắp ráp thiết bị. Mục~\ref{sec:fw_node} và Mục~\ref{sec:fw_master} trình bày firmware của nút cảm biến và nút trung tâm. Bốn mục cuối trình bày phần mềm máy chủ: hiện thực bộ lọc Madgwick (Mục~\ref{sec:impl_madgwick}), quy trình hiệu chuẩn ba tầng (Mục~\ref{sec:impl_calib}), tính góc khớp (Mục~\ref{sec:impl_joint}) và các chỉ số phân tích lâm sàng (Mục~\ref{sec:impl_clinical}).
+
+\section{Môi trường phát triển và lắp ráp thiết bị}
+\label{sec:moitruong}
+
+\subsection{Công cụ và thư viện phát triển}
+Firmware của cả hai loại nút được phát triển trên nền Arduino-ESP32 core, biên dịch và nạp bằng Arduino IDE hoặc PlatformIO. Việc chọn nền Arduino giúp rút ngắn thời gian phát triển nhờ hệ sinh thái thư viện sẵn có cho ESP32, đồng thời vẫn cho phép gọi trực tiếp các API mức thấp của ESP-IDF khi cần tinh chỉnh ESP-NOW hay BLE. Phần mềm máy chủ được viết bằng JavaScript chạy trên trình duyệt, giao tiếp với nút trung tâm qua Web Bluetooth API nên không cần cài đặt trình điều khiển riêng. Bảng~\ref{tab:toolchain} tóm tắt các thành phần công cụ và thư viện chính.
+
+\begin{table}[H]
+    \centering
+    \caption{Công cụ và thư viện phát triển chính của hệ thống.}
+    \label{tab:toolchain}
+    \begin{tabular}{p{3.6cm} p{4.8cm} p{4.8cm}}
+        \toprule
+        \textbf{Thành phần}             & \textbf{Công cụ / thư viện}               & \textbf{Vai trò}            \\
+        \midrule
+        Nút cảm biến \& trung tâm       & Arduino IDE                               & Biên dịch và nạp firmware   \\
+        Giao tiếp I\textsuperscript{2}C & Thư viện \texttt{Wire}                    & Đọc dữ liệu MPU6050         \\
+        Mạng cảm biến                   & \texttt{esp\_now.h}, \texttt{esp\_wifi.h} & Truyền nhận ESP-NOW         \\
+        BLE                             & BLE ESP32 (Bluedroid): \texttt{BLEDevice}, \texttt{BLE2902} & Dịch vụ Nordic UART (NUS)   \\
+        Phần mềm máy chủ                & JavaScript, Web Bluetooth API             & Nhận BLE, xử lý và hiển thị \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Lắp ráp phần cứng}
+Mỗi nút cảm biến gồm một bo ESP32-C3 ghép với một module MPU6050 qua bốn dây I\textsuperscript{2}C (VCC, GND, SDA, SCL) và được cấp nguồn theo cây nguồn đã thiết kế ở Mục~\ref{sec:phancung}. Cụm linh kiện được cố định trong vỏ in 3D và gắn lên cánh tay bằng dây đai như mô tả ở Chương~\ref{chap:thietke}. Hình~\ref{fig:assembly} minh hoạ thiết bị sau khi lắp ráp hoàn chỉnh và bố trí trên cánh tay người dùng trong một phiên đo thử.
+
+\begin{figure}[H]
+    \centering
+    \framebox[0.8\textwidth]{\rule{0pt}{6cm}\textit{(Ảnh thực tế: cụm nút cảm biến đã lắp ráp và bố trí trên cánh tay)}}
+    % \includegraphics[width=0.8\textwidth]{figures/assembly.jpg}
+    \caption{Thiết bị sau khi lắp ráp hoàn chỉnh và đeo trên cánh tay người dùng.}
+    \label{fig:assembly}
+\end{figure}
+
+
+
+
+\section{Lập trình firmware nút cảm biến}
+\label{sec:fw_node}
+
+Nút cảm biến là phần tử đông đảo nhất của hệ thống (sáu nút giống hệt nhau) nên firmware của nó được tối ưu để gọn nhẹ và tất định về thời gian. Nhiệm vụ của firmware gồm bốn phần: cấu hình cảm biến MPU6050, đọc dữ liệu định kỳ, đồng bộ đồng hồ với nút trung tâm, và phát gói dữ liệu đúng khe thời gian được phân bổ.
+
+\subsection{Cấu hình cảm biến MPU6050}
+Nút giao tiếp với MPU6050 qua bus I\textsuperscript{2}C ở chế độ Fast Mode $400\,\si{kHz}$ nhằm rút ngắn thời gian đọc, bảo đảm hoàn tất việc lấy mẫu trong phạm vi một khe TDMA $3\,\si{ms}$. Trong giai đoạn khởi tạo, firmware ghi năm thanh ghi cấu hình cốt lõi như Bảng~\ref{tab:mpu_reg}; các lựa chọn dải đo và bộ lọc đã được luận giải ở Chương~\ref{chap:coso} và Chương~\ref{chap:thietke}.
+
+\begin{table}[H]
+    \centering
+    \caption{Cấu hình các thanh ghi chính của MPU6050.}
+    \label{tab:mpu_reg}
+    \begin{tabular}{p{3.1cm} p{1.7cm} p{1.7cm} p{5.4cm}}
+        \toprule
+        \textbf{Thanh ghi}     & \textbf{Địa chỉ} & \textbf{Giá trị} & \textbf{Ý nghĩa}                                               \\
+        \midrule
+        \texttt{PWR\_MGMT\_1}  & \texttt{0x6B}    & \texttt{0x00}    & Thoát chế độ ngủ, dùng nguồn dao động nội $8\,\si{MHz}$        \\
+        \texttt{SMPLRT\_DIV}   & \texttt{0x19}    & \texttt{0x09}    & Tần số lấy mẫu nội bộ $1000/(1+9)=100\,\si{Hz}$                \\
+        \texttt{CONFIG}        & \texttt{0x1A}    & \texttt{0x03}    & DLPF $44\,\si{Hz}$ (accel) / $42\,\si{Hz}$ (gyro)              \\
+        \texttt{GYRO\_CONFIG}  & \texttt{0x1B}    & \texttt{0x00}    & Dải đo $\pm 250\,^{\circ}/\mathrm{s}$ ($131$~LSB/$^{\circ}$/s) \\
+        \texttt{ACCEL\_CONFIG} & \texttt{0x1C}    & \texttt{0x00}    & Dải đo $\pm 2\,$g ($16384$~LSB/g)                              \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Sau khi cấu hình, mỗi lần lấy mẫu firmware đọc liên tiếp $14$ byte (burst read) bắt đầu từ thanh ghi \texttt{ACCEL\_XOUT\_H} (\texttt{0x3B}), thu về sáu giá trị $16$-bit của gia tốc và vận tốc góc cùng hai byte nhiệt độ. Việc đọc burst trong một giao dịch I\textsuperscript{2}C duy nhất bảo đảm sáu thành phần thuộc cùng một thời điểm lấy mẫu, tránh hiện tượng lệch pha giữa các trục.
+
+\subsection{Định thời lấy mẫu}
+MPU6050 được cấu hình cập nhật mẫu nội bộ ở $100\,\si{Hz}$ để bộ lọc số thông thấp tích hợp (DLPF $44\,\si{Hz}$) hoạt động trên một chuỗi mẫu đủ dày, nhờ đó nhiễu băng cao bị suy giảm trước khi số hoá. Trong khi đó, firmware chỉ \emph{đọc} thanh ghi cảm biến một lần mỗi chu kỳ TDMA $20\,\si{ms}$, tức poll ở $50\,\si{Hz}$. Tốc độ $50\,\si{Hz}$ này đã đủ cho dải tần chuyển động chi trên (dưới $10\,\si{Hz}$) theo phân tích ở Chương~\ref{chap:coso}, đồng thời mỗi lần đọc luôn nhận được mẫu mới nhất đã qua DLPF. Cần nhấn mạnh rằng firmware \emph{không} trung bình hay giảm mẫu (decimate) các mẫu $100\,\si{Hz}$; nó chỉ poll thanh ghi ở $50\,\si{Hz}$, còn tần số cập nhật nội bộ $100\,\si{Hz}$ chỉ phục vụ cho DLPF phần cứng hoạt động hiệu quả. Cách bố trí này giữ lưu lượng vô tuyến và năng lượng phát ở mức thấp mà vẫn bảo toàn chất lượng tín hiệu.
+
+\subsection{Đồng bộ thời gian và lập lịch TDMA}
+Để sáu nút phát không chồng lấn, mỗi nút phải biết \emph{thời điểm tương đối} so với một mốc chung. Nút trung tâm phát quảng bá gói \texttt{SyncPacket} mỗi giây; khi nhận được, nút cảm biến cập nhật độ lệch đồng hồ theo công thức~\eqref{eq:timeoffset} đã nêu ở Chương~\ref{chap:thietke}, sau đó mọi tính toán định thời đều dựa trên đồng hồ đã hiệu chỉnh \texttt{millis()\,+\,timeOffset}. Nếu quá $5\,\si{s}$ không nhận được gói đồng bộ, nút chuyển sang dùng đồng hồ cục bộ để tránh đình trệ. Listing~\ref{lst:tdma} trình bày vòng lặp lập lịch. Mấu chốt là firmware dùng \emph{số thứ tự chu kỳ} \texttt{cycleId} (suy từ thời gian đã trôi chia cho độ dài chu kỳ) để bảo đảm: (i)~\emph{mọi} nút lấy mẫu gần như đồng thời ở \emph{đầu} mỗi chu kỳ, nhờ đó sáu mẫu trong cùng một khung thuộc cùng một thời điểm; và (ii)~mỗi nút chỉ phát \emph{đúng một lần} cho mỗi \texttt{cycleId}, ngay khi đồng hồ đồng bộ chạm khe thời gian dành riêng. Việc đối chiếu theo \texttt{cycleId} (thay vì cờ \texttt{sentThisCycle} đặt lại bằng số dư \texttt{\% CYCLE\_MS}) khắc phục lỗi khiến nút đầu tiên (khe bắt đầu tại $0\,\si{ms}$) chỉ phát được một gói rồi treo.
+
+\begin{lstlisting}[language=C++, caption={Vòng lặp lấy mẫu đồng thời và phát dữ liệu trong khe TDMA trên nút cảm biến.}, label={lst:tdma}]
+const uint32_t SAMPLE_RATE_US = 20000; // chu ky 20 ms = 50 Hz
+const uint32_t SLOT_WIDTH_US  = 3000;  // do rong moi khe 3 ms
+// NODE_ID = 1..6 ; masterMAC = dia chi MAC nut trung tam
+
+void loop() {
+    if (!synced) return;
+    uint32_t elapsedUs = micros() - lastSyncMicros;
+    uint32_t cycleId   = elapsedUs / SAMPLE_RATE_US;  // so thu tu chu ky
+    uint32_t cyclePos  = elapsedUs % SAMPLE_RATE_US;  // vi tri trong chu ky
+    uint32_t slotStart = (NODE_ID - 1) * SLOT_WIDTH_US;
+
+    // (1) Lay mau o DAU chu ky: moi nut doc MPU gan nhu dong thoi
+    if (cycleId != lastSampledCycle) {
+        lastSampledCycle = cycleId;
+        readMPU6050Raw(&pkt);                 // 6 x int16 tho (LSB)
+        pkt.node_id   = NODE_ID;
+        pkt.timestamp = millis() + timeOffset;
+        pkt.seq       = seqNum++;
+        sampleReady   = true;
+    }
+    // (2) Phat trong khe rieng, dung 1 lan moi cycleId (sua loi Node 1)
+    if (sampleReady && cyclePos >= slotStart && cycleId != lastSentCycle) {
+        lastSentCycle = cycleId;
+        sampleReady   = false;
+        esp_now_send(masterMAC, (uint8_t*)&pkt, sizeof(pkt)); // unicast
+    }
+}
+\end{lstlisting}
+
+\subsection{Đóng gói và phát NodePacket}
+Dữ liệu được đóng vào cấu trúc \texttt{NodePacket} dài $18$ byte với chỉ thị \texttt{\#pragma pack(1)} để loại bỏ byte đệm, bảo đảm bố cục nhị phân khớp tuyệt đối giữa nút phát và nút thu. Gói gồm: \texttt{node\_id} ($1$ byte), \texttt{timestamp} ($4$ byte), sáu giá trị cảm biến $16$-bit ($12$ byte) và số thứ tự \texttt{seq} ($1$ byte). Điểm cần nhấn mạnh là gói dữ liệu được gửi \emph{unicast} trực tiếp tới địa chỉ MAC của nút trung tâm bằng \texttt{esp\_now\_send(masterMAC, ...)}, nhờ đó tận dụng cơ chế ACK và phát lại ở tầng MAC của ESP-NOW để tăng độ tin cậy. Đây là điểm khác biệt với gói \texttt{SyncPacket} --- vốn được nút trung tâm phát \emph{quảng bá} (broadcast) tới mọi nút. Các giá trị trong \texttt{NodePacket} là số nguyên thô chưa hiệu chuẩn; việc quy đổi sang đơn vị vật lý được dành cho phần mềm máy chủ ở các mục sau.
+
+
+
+\section{Lập trình firmware nút trung tâm}
+\label{sec:fw_master}
+
+Nút trung tâm đóng vai trò cầu nối giữa mạng cảm biến và máy tính. Trong mỗi chu kỳ $20\,\si{ms}$, nó phải thu nhận tối đa sáu gói \texttt{NodePacket} đến bất đồng bộ từ các nút, tổng hợp thành một khung dữ liệu duy nhất rồi phát lên máy tính qua BLE; song song đó nó định kỳ phát gói đồng bộ và xử lý các sự cố nguồn. Bốn tiểu mục sau lần lượt trình bày các phần này.
+
+\subsection{Thu nhận ESP-NOW và bộ đệm chia sẻ}
+Khi một gói ESP-NOW tới, lớp Wi-Fi gọi một hàm phản hồi (callback) đã đăng ký và được đặt trong RAM bằng thuộc tính \texttt{IRAM\_ATTR}. Cần lưu ý đây \emph{không} phải một ngắt phần cứng thực thụ mà là callback chạy trong ngữ cảnh tác vụ Wi-Fi; tuy vậy nó vẫn thực thi bất đồng bộ so với vòng lặp chính nên phải thật ngắn gọn và an toàn về tương tranh.
+
+Khác với một số kiến trúc dùng \emph{double buffer}, bản hiện thực này dùng \textbf{một bộ đệm chia sẻ duy nhất} \texttt{write\_buf} (mảng sáu phần tử, đánh chỉ số theo \texttt{node\_id}$-1$ vì \texttt{node\_id} chạy từ $1$ đến $6$) kèm các mặt nạ bit \texttt{write\_mask} và \texttt{seen\_mask} để theo dõi nút nào đã gửi dữ liệu. Vì callback và vòng lặp chính cùng truy cập bộ đệm này, đoạn ghi được bảo vệ bằng \emph{vùng găng} (critical section) thông qua \texttt{portENTER\_CRITICAL}/\texttt{portEXIT\_CRITICAL} trên một \texttt{portMUX}, như Listing~\ref{lst:masterbuf}. Cơ chế khoá ngắn này ngăn tình trạng đua dữ liệu (race condition) mà vẫn giữ độ trễ ở mức rất thấp.
+
+\begin{lstlisting}[language=C++, caption={Thu nhận ESP-NOW vào bộ đệm chia sẻ được bảo vệ bằng vùng găng.}, label={lst:masterbuf}]
+portMUX_TYPE bufMux = portMUX_INITIALIZER_UNLOCKED;
+NodePacket   write_buf[6];
+volatile uint8_t write_mask = 0;   // nut da gui trong chu ky hien tai
+volatile uint8_t seen_mask  = 0;   // nut da tung xuat hien (de biet du chua)
+
+// Callback ESP-NOW chay trong ngu canh tac vu WiFi (IRAM_ATTR)
+void IRAM_ATTR onEspNowRecv(const uint8_t* mac,
+                            const uint8_t* data, int len) {
+    const NodePacket* pkt = (const NodePacket*)data;
+    uint8_t idx = pkt->node_id - 1;          // node_id = 1..6 -> chi so 0..5
+    if (idx >= 6) return;
+    portENTER_CRITICAL(&bufMux);             // vao vung gang
+    write_buf[idx] = *pkt;                   // 1 buffer chia se duy nhat
+    write_mask |= (1 << idx);                // danh dau node da co du lieu
+    seen_mask  |= (1 << idx);
+    portEXIT_CRITICAL(&bufMux);
+}
+\end{lstlisting}
+
+\subsection{Tổng hợp và đóng khung BLE}
+Mỗi $20\,\si{ms}$, vòng lặp chính vào vùng găng để \emph{chụp nhanh} (snapshot) \texttt{write\_buf} cùng \texttt{write\_mask} sang biến cục bộ rồi xoá mặt nạ, sau đó rời vùng găng ngay để callback tiếp tục ghi. Nhờ vậy thời gian giữ khoá là tối thiểu. Từ bản chụp, firmware đóng khung BLE $80$ byte theo đúng định dạng đã thiết kế ở Bảng~\ref{tab:bleframe} (Chương~\ref{chap:thietke}): byte tiêu đề \texttt{0xAA}, mặt nạ \texttt{active\_mask}, nhãn thời gian, sáu khối $12$ byte dữ liệu thô, byte kiểm tra XOR và byte kết \texttt{0x55}. Mặt nạ \texttt{active\_mask} chính là \texttt{write\_mask} tại thời điểm chụp, cho phép máy chủ biết khung chứa dữ liệu của những nút nào.
+
+Quyết định \emph{khi nào} phát một khung dựa trên hai điều kiện: hoặc đã đủ dữ liệu của mọi nút từng xuất hiện (\emph{complete}), hoặc đã hết một chu kỳ $20\,\si{ms}$ (\emph{timeout}). Cơ chế kép này vừa giảm độ trễ khi mọi nút gửi sớm, vừa bảo đảm máy chủ luôn nhận khung đều đặn kể cả khi một nút mất gói. Hình~\ref{fig:master_flow} mô tả vòng lặp, còn Listing~\ref{lst:masteremit} trình bày đoạn mã quyết định phát khung.
+
+\begin{figure}[H]
+    \centering
+    \resizebox{0.5\textwidth}{!}{%
+        \begin{tikzpicture}[>={Latex[length=2mm]}, node distance=7mm, font=\small,
+            st/.style ={draw, rounded corners, align=center, minimum width=50mm, minimum height=9mm, fill=white},
+            dec/.style={draw, diamond, aspect=2.4, align=center, inner sep=1pt, fill=black!6}]
+            \node[st]  (recv) {Callback ESP-NOW ghi \texttt{write\_buf},\\\texttt{write\_mask}, \texttt{seen\_mask} (vùng găng)};
+            \node[dec, below=10mm of recv] (cond) {\emph{complete}\\hoặc \emph{timeout}?};
+            \node[st, below=10mm of cond] (snap) {Chụp nhanh buffer (vùng găng),\\xoá \texttt{write\_mask}};
+            \node[st, below=of snap] (pack) {Đóng khung $80$ byte\\+ checksum XOR};
+            \node[st, below=of pack] (ble)  {BLE \texttt{notify} về máy chủ};
+            \draw[->] (recv) -- (cond);
+            \draw[->] (cond) -- node[right]{Đúng} (snap);
+            \draw[->] (snap) -- (pack);
+            \draw[->] (pack) -- (ble);
+            \draw[->] (cond.east) -- ++(2.6,0) |- node[pos=0.25,right]{Sai} (recv.east);
+        \end{tikzpicture}}
+    \caption{Lưu đồ vòng lặp chính của nút trung tâm: gom dữ liệu sáu nút vào bộ đệm chia sẻ; khi đã đủ nút (\emph{complete}) hoặc hết $20\,\si{ms}$ (\emph{timeout}) thì chụp nhanh, đóng khung $80$~byte và phát BLE.}
+    \label{fig:master_flow}
+\end{figure}
+
+\begin{lstlisting}[language=C++, caption={Quyết định phát khung BLE: đủ nút hoặc hết chu kỳ.}, label={lst:masteremit}]
+uint32_t now = millis();
+bool timeout  = (now >= nextFrameAt);
+bool complete = (seen_mask != 0) &&
+                ((write_mask & seen_mask) == seen_mask);
+if (timeout || complete) {
+    nextFrameAt = now + FRAME_INTERVAL_MS;     // 20 ms
+    portENTER_CRITICAL(&bufMux);               // chup nhanh
+    uint8_t    activeMask = write_mask;
+    NodePacket snap[6];
+    memcpy(snap, write_buf, sizeof(snap));
+    write_mask = 0;
+    portEXIT_CRITICAL(&bufMux);
+    buildBleFrame80(snap, activeMask);         // header 0xAA, XOR, 0x55
+    pTxChar->notify();                         // day khung ve may chu
+}
+\end{lstlisting}
+
+\subsection{Dịch vụ BLE Nordic UART}
+Nút trung tâm công bố một dịch vụ Nordic UART Service (NUS, UUID \texttt{6e400001-\ldots}) bằng thư viện BLE tích hợp của Arduino-ESP32 (ngăn xếp Bluedroid, các lớp \texttt{BLEDevice}, \texttt{BLEServer}, \texttt{BLE2902}), trong đó đặc tính TX được cấu hình thuộc tính \texttt{NOTIFY} để đẩy khung dữ liệu về máy chủ mà không cần máy chủ hỏi vòng. Kích thước gói tin ATT được nâng lên bằng \texttt{BLEDevice::setMTU(200)} nhằm chứa trọn khung $80$ byte trong một lần truyền, tránh phân mảnh. Các tham số kết nối (connection interval) được giữ ở giá trị do trình duyệt thương lượng --- lời gọi \texttt{updateConnParams} được để lại dưới dạng chú thích trong mã nguồn, vì khoảng kết nối mặc định đã đáp ứng yêu cầu thời gian thực $50\,\si{Hz}$.
+
+\subsection{Xử lý sự cố thực tiễn}
+Do phải chạy liên tục trong thời gian dài, firmware nút trung tâm tích hợp một số biện pháp tăng độ ổn định. Bộ giám sát (watchdog) sẽ khởi động lại vi điều khiển nếu vòng lặp chính bị treo; để watchdog không kích hoạt nhầm, vòng lặp gọi \texttt{delay(1)} nhường CPU cho tác vụ rảnh và cho ngăn xếp Wi-Fi/BLE của FreeRTOS. Mạch cũng dựa vào bộ phát hiện sụt áp (brownout detector) của ESP32 để tự khởi động lại an toàn khi điện áp nguồn tụt dưới ngưỡng --- tình huống dễ xảy ra khi pin yếu hoặc khi BLE phát ở công suất cao. Hình~\ref{fig:serial_master} minh hoạ nhật ký Serial dùng để theo dõi tỉ lệ khung hợp lệ và mặt nạ \texttt{active\_mask} trong quá trình vận hành.
+
+\begin{figure}[H]
+    \centering
+    \framebox[0.85\textwidth]{\rule{0pt}{5cm}\textit{(Ảnh thực tế: cửa sổ Serial Monitor của nút trung tâm hiển thị tỉ lệ khung hợp lệ và mặt nạ active\_mask)}}
+    % \includegraphics[width=0.85\textwidth]{figures/serial_master.png}
+    \caption{Nhật ký Serial của nút trung tâm trong một phiên thu sáu nút.}
+    \label{fig:serial_master}
+\end{figure}
+
+
+\section{Hiện thực bộ lọc Madgwick trên phần mềm máy chủ}
+\label{sec:impl_madgwick}
+
+Sau khi nhận khung BLE, phần mềm máy chủ tách dữ liệu thô của từng nút, áp hiệu chuẩn (Mục~\ref{sec:impl_calib}) rồi đưa qua một thể hiện bộ lọc Madgwick 6DOF riêng cho mỗi nút (lớp \texttt{MadgwickFilter}). Phần này mô tả cách chuyển thuật toán Madgwick đã trình bày ở Mục~\ref{sec:madgwick} (Chương~\ref{chap:coso}) thành mã nguồn.
+
+Mỗi nút được gán một thể hiện \texttt{MadgwickFilter} độc lập, lưu trữ riêng quaternion trạng thái $\mathbf{q}$ và hệ số $\beta$, nhờ đó sáu luồng dữ liệu được hợp nhất song song mà không ảnh hưởng lẫn nhau. Trước khi đưa vào bộ lọc, vận tốc góc được đổi từ $^{\circ}/\si{s}$ sang $\si{rad/s}$, còn vector gia tốc được chuẩn hoá về độ dài đơn vị --- do thuật toán chỉ dùng \emph{hướng} của trọng lực chứ không dùng độ lớn. Bước thời gian $\Delta t$ giữa hai lần cập nhật được \emph{cố định} bằng nghịch đảo tần số lấy mẫu danh định ($\Delta t = 1/50\,\si{Hz} = 20\,\si{ms}$), khớp với chu kỳ phát danh định của các nút. Đây là một lựa chọn đơn giản hoá; việc suy $\Delta t$ trực tiếp từ nhãn thời gian của khung để bộ lọc bền vững hơn khi có khung BLE bị trễ hoặc mất là một cải tiến có thể bổ sung. Vì hệ chỉ dùng sáu bậc tự do (gia tốc kế và con quay, không có từ kế), góc phương vị (yaw) chỉ được tích phân từ con quay nên có thể trôi chậm theo thời gian; điều này được bù một phần nhờ bước hiệu chuẩn tư thế nghỉ ở Mục~\ref{subsec:impl_zeroref}.
+
+Hàm cập nhật \texttt{updateIMU} thực hiện đúng năm bước của thuật toán: (1) tính đạo hàm quaternion từ con quay $\dot{\mathbf q}_\omega = \tfrac{1}{2}\,\mathbf q \otimes [0,\boldsymbol\omega]$; (2) dựng hàm mục tiêu đo sai lệch giữa hướng trọng lực đo bằng gia tốc kế và hướng trọng lực suy ra từ quaternion; (3) tính gradient (bốn thành phần \texttt{s0}--\texttt{s3}) rồi chuẩn hoá; (4) hợp nhất $\dot{\mathbf q} = \dot{\mathbf q}_\omega - \beta\,\nabla f/\lVert\nabla f\rVert$ với $\beta = 0{,}1$ mặc định; và (5) tích phân theo bước thời gian rồi \emph{chuẩn hoá quaternion sau mỗi bước}. Góc Euler được trích theo quy ước \textbf{ZYX} bằng hàm \texttt{getEulerDeg}. Listing~\ref{lst:madgwick} tóm tắt cấu trúc hàm.
+
+\begin{lstlisting}[language=C++, caption={Cấu trúc hàm cập nhật Madgwick 6DOF (rút gọn).}, label={lst:madgwick}]
+updateIMU(gx, gy, gz, ax, ay, az) {
+  // gx..gz: rad/s; ax..az: don vi bat ky (se duoc chuan hoa)
+  const dt = 1.0 / this.sampleFreq;   // co dinh = 1/50 Hz = 20 ms
+  // 1) Dao ham quaternion tu gyro
+  let qDot = halfQuatProduct(this.q, [0, gx, gy, gz]);
+  // 2-3) Gradient descent tu gia toc ke (neu accel hop le)
+  if (!(ax === 0 && ay === 0 && az === 0)) {
+    [ax, ay, az] = normalize3(ax, ay, az);
+    let s = computeGradient(this.q, ax, ay, az); // [s0,s1,s2,s3]
+    s = normalize4(s);
+    // 4) Hop nhat voi he so beta
+    qDot = sub4(qDot, scale4(s, this.beta));     // beta = 0.1
+  }
+  // 5) Tich phan + chuan hoa quaternion
+  this.q = normalizeQuat(add4(this.q, scale4(qDot, dt)));
+}
+\end{lstlisting}
+
+Hệ số $\beta$ điều tiết mức độ tin cậy vào gia tốc kế: $\beta$ lớn giúp sửa trôi nhanh nhưng nhạy nhiễu khi chuyển động mạnh, $\beta$ nhỏ cho đầu ra mượt nhưng chậm hội tụ. Giá trị mặc định $\beta = 0{,}1$ được chọn theo khuyến nghị của Madgwick và kiểm chứng phù hợp với dải chuyển động chi trên.
+
+
+
+
+\section{Hiện thực quy trình hiệu chuẩn}
+\label{sec:impl_calib}
+
+Toàn bộ quy trình hiệu chuẩn ba tầng đã trình bày ở Mục~\ref{sec:hieuchuan} (Chương~\ref{chap:coso}) được hiện thực trong phần mềm máy chủ, chủ yếu ở hai lớp \texttt{CalibrationData} và \texttt{SensorFusion}. Việc đặt hiệu chuẩn trên máy chủ cho phép thay đổi tham số hay quy trình mà không phải nạp lại firmware. Ba tiểu mục đầu trình bày từng tầng, tiểu mục cuối nêu cách ghép chúng vào luồng xử lý.
+
+\subsection{Hiệu chuẩn nhà máy (Factory Calibration)}
+\label{subsec:impl_factory}
+Tầng đầu tiên --- hiệu chuẩn nhà máy --- được thực hiện \emph{ngoại tuyến}, một lần cho mỗi nút trước khi triển khai, nhằm xác định bộ tham số riêng cho từng cảm biến: ma trận hiệu chỉnh gia tốc $\mathbf{M}\in\mathbb{R}^{3\times3}$ (gồm hệ số tỉ lệ và sai lệch trục chéo), vector độ lệch gia tốc $\mathbf{b}_a$ (đơn vị $\si{m/s^2}$), vector hệ số tỉ lệ con quay $\mathbf{K}\in\mathbb{R}^{3}$ và vector độ lệch con quay $\mathbf{b}_g$ (đơn vị $^{\circ}/\si{s}$). Do sáu cảm biến MPU6050 có sai số chế tạo khác nhau, mỗi nút được hiệu chuẩn \textbf{riêng rẽ}, thu được sáu bộ tham số độc lập. Toàn bộ phép ước lượng tham số được thực hiện \emph{ngoại tuyến} trên \emph{dữ liệu thô} bằng một công cụ Python độc lập (thư mục \texttt{calibration/}, chỉ dùng \texttt{numpy}; các bộ giải Gauss--Newton/Levenberg--Marquardt được tự cài đặt), xuất báo cáo Excel kèm biểu đồ so sánh trước/sau hiệu chuẩn. Sáu bộ tham số thu được sau đó được nạp vào phần mềm máy chủ và \emph{áp trực tiếp bằng JavaScript} ở lớp \texttt{CalibrationData} theo thời gian thực --- nhất quán với nguyên tắc dồn toàn bộ khâu xử lý về máy chủ.
+
+\subsubsection*{Quy trình hiệu chuẩn gia tốc kế}
+Tham số $\mathbf{M}$ và $\mathbf{b}_a$ được ước lượng theo phương pháp hiệu chuẩn hiện trường đa tư thế của Hassan và Bao~\cite{hassanbao2020}, dựa trên một ràng buộc vật lý đơn giản: ở mọi tư thế \emph{đứng yên}, độ lớn vector gia tốc đo được phải đúng bằng gia tốc trọng trường $g$. Quy trình gồm các bước:
+\begin{enumerate}
+    \item Đặt nút cảm biến lần lượt ở $30$ tư thế tĩnh khác nhau, cố định \emph{thủ công bằng tay} trên các mặt phẳng (mặt bàn và các mặt của một khối hộp), không dùng thiết bị cơ khí chuyên dụng; mỗi tư thế giữ yên vài giây.
+    \item Tại mỗi tư thế, lấy trung bình nhiều mẫu thô để khử nhiễu, thu được một vector gia tốc thô $\tilde{\mathbf{a}}_k$ ($k = 1,\dots,30$).
+    \item Lập hàm chi phí tổng bình phương sai lệch giữa độ lớn gia tốc hiệu chỉnh và $g$ trên toàn bộ tư thế:
+          \begin{equation}
+              J(\mathbf{M},\mathbf{b}_a) = \sum_{k=1}^{30}\Big( \big\lVert \mathbf{M}\,(g\cdot\tilde{\mathbf{a}}_k - \mathbf{b}_a) \big\rVert - g \Big)^{2}.
+              \label{eq:calibcost}
+          \end{equation}
+    \item Cực tiểu hoá $J$ bằng thuật toán bình phương tối thiểu Gauss--Newton (GNLS) với cập nhật \emph{lặp đệ quy}: ở mỗi vòng, tham số được hiệu chỉnh theo hướng giảm của $J$ cho tới khi lượng thay đổi nhỏ hơn ngưỡng hội tụ.
+    \item Thu được $\mathbf{M}$ và $\mathbf{b}_a$ cho nút đang xét; lặp lại toàn bộ quy trình cho cả sáu nút.
+\end{enumerate}
+Hình~\ref{fig:calib_static} minh hoạ một số tư thế tĩnh điển hình khi thu thập dữ liệu hiệu chuẩn gia tốc kế.
+
+\begin{figure}[H]
+    \centering
+    \framebox[0.8\textwidth]{\rule{0pt}{6cm}\textit{(Ảnh thực tế: nút cảm biến đặt ở nhiều tư thế tĩnh trên mặt bàn và các mặt khối hộp để thu dữ liệu hiệu chuẩn gia tốc kế)}}
+    % \includegraphics[width=0.8\textwidth]{figures/calib_static.jpg}
+    \caption{Một số tư thế tĩnh trong $30$ tư thế dùng để thu thập dữ liệu hiệu chuẩn gia tốc kế.}
+    \label{fig:calib_static}
+\end{figure}
+
+\subsubsection*{Quy trình hiệu chuẩn con quay}
+Tham số con quay được xác định theo phương pháp của Wang và cộng sự~\cite{wang2024}, gồm hai phần:
+\begin{enumerate}
+    \item \textbf{Độ lệch tĩnh} $\mathbf{b}_g$: giữ nút đứng yên và lấy trung bình giá trị con quay thô trong vài giây; trung bình này (lưu ở dạng số đối) chính là độ lệch cần bù.
+    \item \textbf{Hệ số tỉ lệ} $\mathbf{K}$: quay nút quanh từng trục một góc tham chiếu đã biết --- ở đây là $360^{\circ}$ --- rồi đưa về đúng vị trí ban đầu. Tích phân vận tốc góc đo được trong quá trình quay theo lý thuyết phải bằng $360^{\circ}$; tỉ số giữa góc thực và góc đo cho hệ số tỉ lệ của trục tương ứng.
+\end{enumerate}
+Việc quay được thực hiện \emph{thủ công}: tì khối hộp chứa cảm biến vào một cạnh mốc trên mặt bàn rồi xoay trọn một vòng và đặt lại vị trí cũ (không dùng bàn xoay cơ khí), như Hình~\ref{fig:calib_rotation}.
+
+\begin{figure}[H]
+    \centering
+    \framebox[0.8\textwidth]{\rule{0pt}{5.5cm}\textit{(Ảnh thực tế: thiết lập xoay tham chiếu 360 độ thủ công dùng mặt bàn và khối hộp làm mốc, không dùng bàn xoay)}}
+    % \includegraphics[width=0.8\textwidth]{figures/calib_rotation.jpg}
+    \caption{Thiết lập xoay tham chiếu $360^{\circ}$ thủ công để hiệu chuẩn hệ số tỉ lệ con quay.}
+    \label{fig:calib_rotation}
+\end{figure}
+
+\subsubsection*{Áp tham số khi vận hành}
+Sáu bộ tham số thu được ở trên được nạp vào phần mềm máy chủ và áp cho dữ liệu thô theo thời gian thực qua hàm \texttt{applyCalibration(nodeId, ax, ay, az, gx, gy, gz)}. Với gia tốc, giá trị thô (đơn vị LSB) trước hết được đổi sang $\si{m/s^2}$ bằng cách chia cho $16384$ rồi nhân với $g$, \emph{sau đó} mới trừ độ lệch và nhân ma trận hiệu chỉnh:
+\begin{equation}
+    \mathbf{a}_{\mathrm{cal}} = \mathbf{M}\,\big( g\cdot \mathbf{a}_{\mathrm{raw}} - \mathbf{b}_a \big), \qquad g = 9{,}80665~\si{m/s^2},
+    \label{eq:accelcalib}
+\end{equation}
+trong đó $\mathbf{a}_{\mathrm{raw}}$ là gia tốc theo đơn vị $g$ (đã chia $16384$) và $\mathbf{b}_a$ là độ lệch tính bằng $\si{m/s^2}$. Cần lưu ý thứ tự: hệ số $g$ được áp \textbf{trước} khi trừ độ lệch, và độ lệch được lưu sẵn bằng $\si{m/s^2}$ (ví dụ $-1{,}27~\si{m/s^2}$), khác với cách quy đổi nhân $g$ sau cùng đôi khi gặp trong tài liệu.
+
+Với con quay, giá trị thô được đổi sang $^{\circ}/\si{s}$ (chia cho $131$) rồi nhân hệ số tỉ lệ theo từng trục:
+\begin{equation}
+    \mathbf{g}_{\mathrm{cal}} = \mathbf{K}\odot\big( \mathbf{g}_{\mathrm{raw}} + \mathbf{b}_g \big).
+    \label{eq:gyrocalib}
+\end{equation}
+Ở đây dấu là \textbf{cộng} chứ không phải trừ: trong mã nguồn, độ lệch con quay được lưu dưới dạng \emph{số đối} của giá trị đo lúc đứng yên ($\mathbf{b}_g = -\overline{\mathbf{g}}_{\mathrm{raw}}$), nên phép cộng tương đương với việc trừ đi độ lệch trung bình --- đúng như chú thích ``added, not subtracted'' trong mã. Listing~\ref{lst:applycalib} minh hoạ hàm này.
+
+\begin{lstlisting}[language=C++, caption={Hàm áp hiệu chuẩn nhà máy cho một nút.}, label={lst:applycalib}]
+applyCalibration(nodeId, ax, ay, az, gx, gy, gz) {
+  const c = this.cal[nodeId];     // { M, biasAccel (m/s^2), K, biasGyro }
+  const G = 9.80665;
+  // Gia toc: doi sang m/s^2, tru bias (m/s^2), roi nhan ma tran M
+  let a = [ax/16384*G, ay/16384*G, az/16384*G];
+  a = matVec(c.M, sub3(a, c.biasAccel));
+  // Gyro: K .* (g_dps + biasGyro)  (bias luu o dang so doi -> cong)
+  let g = mul3(c.K, add3([gx/131, gy/131, gz/131], c.biasGyro));
+  return { ax:a[0], ay:a[1], az:a[2], gx:g[0], gy:g[1], gz:g[2] };
+}
+\end{lstlisting}
+
+\subsection{Hiệu chuẩn độ lệch con quay thời gian thực}
+\label{subsec:impl_runtime}
+Mặc dù độ lệch con quay đã được bù một phần ở tầng nhà máy, giá trị này vẫn \emph{trôi} theo nhiệt độ và thời gian giữa các lần sử dụng. Phần trôi còn lại tuy nhỏ nhưng bị tích phân trực tiếp vào góc, gây sai số tăng dần (drift) --- đặc biệt ở góc phương vị vốn không được gia tốc kế hiệu chỉnh. Vì vậy hệ thống bổ sung một tầng hiệu chuẩn nhẹ \emph{ngay trước mỗi phiên đo}, thực hiện hoàn toàn tự động trên phần mềm máy chủ trong lớp \texttt{SensorFusion}. Quy trình gồm các bước:
+\begin{enumerate}
+    \item Người dùng đặt cánh tay ở một tư thế bất kỳ và giữ \emph{hoàn toàn yên} trong khoảng $4\,\si{s}$.
+    \item Với mỗi trong số sáu cảm biến đang hoạt động, hệ thống thu $N = 200$ mẫu con quay đã quy đổi ($50\,\si{Hz}\times 4\,\si{s}$).
+    \item Lấy trung bình cộng để ước lượng độ lệch dư:
+          \begin{equation}
+              \mathbf{b}_{\mathrm{gyro}} = \frac{1}{N}\sum_{i=1}^{N}\mathbf{g}_{\mathrm{cal}}^{(i)}, \qquad N = 200.
+              \label{eq:runtimebias}
+          \end{equation}
+    \item Trong suốt phiên đo sau đó, $\mathbf{b}_{\mathrm{gyro}}$ được trừ khỏi mọi mẫu con quay trước khi đưa vào bộ lọc Madgwick.
+\end{enumerate}
+Cửa sổ $4\,\si{s}$ đủ dài để phép trung bình triệt tiêu nhiễu ngẫu nhiên nhưng vẫn đủ ngắn để không gây phiền cho người dùng. Tiến trình được hiển thị theo phần trăm số mẫu đã thu (\texttt{progress = samples/200}) và chạy đồng thời cho cả sáu cảm biến. Vì phép ước lượng giả định cảm biến đứng yên, người dùng cần được hướng dẫn giữ tay bất động trong bước này; mọi chuyển động sẽ làm sai lệch giá trị trung bình. Cũng chính vì nhanh và không cần thiết bị, tầng hiệu chuẩn này được tách khỏi tầng nhà máy và có thể lặp lại mỗi lần đeo thiết bị.
+
+\subsection{Hiệu chuẩn tư thế nghỉ (Zero-Reference)}
+\label{subsec:impl_zeroref}
+Hai tầng trên cho ra góc nghiêng \emph{tuyệt đối} so với phương trọng lực, nhưng vị trí gắn cảm biến trên mỗi đoạn chi lại khác nhau giữa các lần đeo và giữa những người dùng. Tầng cuối khắc phục điều này bằng cách thiết lập một \emph{gốc} $0^{\circ}$ tại một tư thế chuẩn (ví dụ cánh tay buông dọc thân), để các góc khớp về sau được đo \emph{tương đối} so với tư thế đó thay vì so với hệ quy chiếu riêng của cảm biến.
+
+Bản hiện thực trong \texttt{SensorFusion} dùng phương pháp \textbf{trừ góc Euler} chứ không phải nhân quaternion. Quy trình như sau:
+\begin{enumerate}
+    \item Người dùng đưa cánh tay về tư thế chuẩn và giữ yên (thường nối tiếp ngay sau bước hiệu chuẩn con quay).
+    \item Hệ thống tính các góc tham chiếu \emph{từ gia tốc kế} ở trạng thái tĩnh --- khi đó vector gia tốc đo được chính là phương trọng lực:
+          \begin{equation}
+              \phi_{\mathrm{ref}} = \operatorname{atan2}(a_y, a_z), \quad \theta_{\mathrm{ref}} = \operatorname{atan2}\!\big(-a_x,\ \sqrt{a_y^2 + a_z^2}\big), \quad \psi_{\mathrm{ref}} = 0,
+              \label{eq:zeroref}
+          \end{equation}
+          trong đó góc phương vị $\psi_{\mathrm{ref}}$ luôn đặt bằng $0$ vì hệ không có từ kế nên không có tham chiếu phương vị tuyệt đối.
+    \item Lưu bộ góc tham chiếu làm độ lệch, đồng thời \textbf{khởi động lại bộ lọc Madgwick} (\texttt{filter.reset()}) để xoá trạng thái quaternion cũ.
+    \item Ở mỗi khung sau đó, góc xuất ra là hiệu giữa góc Euler hiện tại và góc tham chiếu: $\text{output} = \text{euler} - \text{ref}$.
+\end{enumerate}
+
+Đây là một lựa chọn hiện thực có \emph{đánh đổi}: cách trừ Euler đơn giản nhưng kéo theo giai đoạn hội tụ lại của bộ lọc sau khi reset (khoảng $1$--$3\,\si{s}$) và có thể kém chính xác quanh vùng $\pm 90^{\circ}$ pitch (vùng dễ gặp suy biến Gimbal). Phương pháp \emph{quaternion offset} ($\mathbf{q}_{\mathrm{out}} = \mathbf{q}_{\mathrm{offset}}^{-1}\otimes\mathbf{q}$) --- vốn tránh được hai nhược điểm trên --- cũng có trong hệ thống nhưng chỉ được dùng ở \emph{khối hiển thị 3D} (\texttt{Arm3DViewHumanoid.calibrateZero}) để căn chỉnh hình đại diện cánh tay, chứ không nằm trong luồng tính góc khớp lâm sàng. Việc thống nhất hai cách này là một cải tiến đáng cân nhắc cho các phiên bản sau.
+
+\subsection{Tích hợp vào luồng xử lý}
+\label{subsec:impl_pipeline}
+Ba tầng hiệu chuẩn trên không hoạt động riêng lẻ mà được ghép vào một luồng xử lý hoàn chỉnh trên máy chủ, theo đúng thứ tự đã thiết kế ở Hình~\ref{fig:pipeline_design} (Chương~\ref{chap:thietke}): dữ liệu thô $\to$ hiệu chuẩn nhà máy $\to$ trừ độ lệch con quay thời gian thực $\to$ bộ lọc Madgwick $\to$ trích góc Euler ZYX $\to$ trừ tư thế nghỉ $\to$ lọc làm mượt EMA ($\alpha = 0{,}2$) $\to$ tính góc khớp.
+
+Thứ tự này được lựa chọn có chủ đích. Hiệu chuẩn nhà máy phải đứng đầu để quy đổi dữ liệu thô về đơn vị vật lý đúng tỉ lệ và đúng trục. Việc trừ độ lệch con quay phải làm \emph{trước} bộ lọc Madgwick, nếu không phần độ lệch dư sẽ bị tích phân thẳng vào quaternion và tích luỹ thành sai số góc. Bước trừ tư thế nghỉ được đặt \emph{sau} khi đã trích góc Euler vì nó thao tác trực tiếp trên các góc. Cuối cùng, bộ lọc làm mượt hàm mũ (EMA, hệ số $\alpha = 0{,}2$, hiện thực trong \texttt{DataProcessingViewModel}) khử phần rung nhẹ còn sót mà không gây trễ đáng kể. Việc tập trung toàn bộ các bước ở phần mềm máy chủ cho phép bật/tắt từng tầng một cách độc lập khi gỡ lỗi, nhờ đó dễ khoanh vùng nguyên nhân khi sai số tăng bất thường mà không phải nạp lại firmware cho sáu nút. Hình~\ref{fig:calib_pipeline} tóm tắt toàn bộ luồng xử lý dưới dạng lưu đồ.
+
+\begin{figure}[H]
+    \centering
+    \resizebox{0.95\textwidth}{!}{%
+        \begin{tikzpicture}[>={Latex[length=2mm]}, node distance=5mm and 7mm, font=\small,
+            st/.style={draw, rounded corners, align=center, minimum height=11mm, minimum width=20mm, fill=white},
+            cal/.style={draw, rounded corners, align=center, minimum height=11mm, minimum width=22mm, fill=black!6}]
+            \node[st]  (raw)   {Dữ liệu thô\\(LSB)};
+            \node[cal, right=of raw]   (fac)  {Hiệu chuẩn\\nhà máy\\$\mathbf{M},\mathbf{b}_a,\mathbf{K}$};
+            \node[cal, right=of fac]   (bias) {Trừ độ lệch\\con quay\\(thời gian thực)};
+            \node[st,  right=of bias]  (mad)  {Bộ lọc\\Madgwick\\6DOF};
+            \node[st,  below=of mad]   (eul)  {Trích góc\\Euler ZYX};
+            \node[cal, left=of eul]    (zero) {Trừ tư thế\\nghỉ};
+            \node[st,  left=of zero]   (ema)  {Lọc mượt\\EMA $\alpha{=}0{,}2$};
+            \node[st,  left=of ema]    (joint){Tính góc\\khớp};
+            \draw[->] (raw)--(fac); \draw[->] (fac)--(bias); \draw[->] (bias)--(mad);
+            \draw[->] (mad)--(eul);  \draw[->] (eul)--(zero); \draw[->] (zero)--(ema);
+            \draw[->] (ema)--(joint);
+        \end{tikzpicture}}
+    \caption{Lưu đồ luồng xử lý tín hiệu trên phần mềm máy chủ: ba tầng hiệu chuẩn (nền xám) được ghép xen kẽ với hợp nhất Madgwick, trích góc Euler và làm mượt trước khi tính góc khớp.}
+    \label{fig:calib_pipeline}
+\end{figure}
+
+
+\section{Lập trình tính góc khớp}
+\label{sec:impl_joint}
+
+Đầu ra của khâu hợp nhất là góc Euler (ZYX) của \emph{từng đoạn chi} so với hệ quy chiếu trọng lực. Để có ý nghĩa lâm sàng, các góc này phải được chuyển thành \emph{góc khớp} --- tức góc tương đối giữa hai đoạn chi kề nhau nối bởi một khớp. Cụ thể, các đoạn cánh tay trên, cẳng tay và bàn tay (mỗi đoạn mang một cảm biến) cho phép suy ra ba khớp chính: vai, khuỷu và cổ tay.
+
+Hàm \texttt{\_computeJointAngles} tính các góc khớp bằng phương pháp \textbf{xấp xỉ phẳng} (planar approximation): lấy hiệu thành phần góc Euler tương ứng giữa đoạn xa và đoạn gần, như Bảng~\ref{tab:jointformula}. Trực giác của phép xấp xỉ là: khi chuyển động diễn ra chủ yếu trong một mặt phẳng, góc gấp tại một khớp xấp xỉ bằng chênh lệch góc nghiêng của hai đoạn chi quanh trục vuông góc với mặt phẳng đó. Riêng góc gập khuỷu được chặn dưới bằng $\max(0,\cdot)$ để không cho ra giá trị âm phi vật lý khi có nhiễu nhỏ quanh tư thế duỗi thẳng, vì khuỷu không thể duỗi quá $0^{\circ}$.
+
+\begin{table}[H]
+    \centering
+    \caption{Công thức xấp xỉ phẳng cho các góc khớp (đơn vị độ).}
+    \label{tab:jointformula}
+    \begin{tabular}{p{6cm} p{6.5cm}}
+        \toprule
+        \textbf{Góc khớp} & \textbf{Công thức xấp xỉ phẳng}                                                                          \\
+        \midrule
+        Gập/duỗi vai      & $|\theta^{\mathrm{upper}}_{\mathrm{pitch}}|$                                                             \\
+        Dạng vai          & $|\phi^{\mathrm{upper}}_{\mathrm{roll}}|$                                                                \\
+        Gập khuỷu         & $\max\!\big(0,\ \theta^{\mathrm{fore}}_{\mathrm{pitch}} - \theta^{\mathrm{upper}}_{\mathrm{pitch}}\big)$ \\
+        Gập cổ tay        & $\theta^{\mathrm{wrist}}_{\mathrm{pitch}} - \theta^{\mathrm{fore}}_{\mathrm{pitch}}$                     \\
+        Lệch cổ tay       & $\psi^{\mathrm{wrist}}_{\mathrm{yaw}} - \psi^{\mathrm{fore}}_{\mathrm{yaw}}$                             \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Bản hiện thực hiện tại chỉ dùng phương pháp phẳng vì nó nhẹ về tính toán, ổn định và đủ chính xác cho các bài tập phục hồi chức năng được hướng dẫn thực hiện trong một mặt phẳng cố định --- đúng phạm vi của đề tài. Hạn chế của nó là sai số tăng khi chuyển động có thành phần ngoài mặt phẳng hoặc khi có xoay trong/ngoài (internal/external rotation). Phương pháp ma trận quay tương đối (relative rotation, kèm hiệu chuẩn giải phẫu T-pose) đã bàn ở Mục~\ref{sec:donghoc} xử lý được chuyển động đa mặt phẳng và cho góc khớp đầy đủ ba bậc tự do, nhưng đòi hỏi bước hiệu chuẩn tư thế giải phẫu phức tạp hơn nên chưa được tích hợp; phương pháp này được nêu như một hướng phát triển ở Chương~\ref{chap:ketluan}.
+
+
+\section{Hiện thực các chỉ số phân tích lâm sàng}
+\label{sec:impl_clinical}
+
+Các chỉ số lâm sàng được tính trên một bộ đệm vòng (ring buffer) lưu $500$ mẫu gần nhất (\texttt{MAX\_SAMPLES = 500}) cho mỗi góc khớp, tương ứng cửa sổ quan sát trượt khoảng $10\,\si{s}$ ở tần số $50\,\si{Hz}$. Cấu trúc vòng cho phép cập nhật liên tục với chi phí $O(1)$ trên mỗi mẫu: mẫu mới ghi đè mẫu cũ nhất mà không phải dịch chuyển mảng. Trên cửa sổ này, phần mềm tính hai nhóm chỉ số bổ sung cho nhau: \emph{phân tích phổ và tầm vận động} phản ánh \emph{biên độ và tần số} của chuyển động, còn \emph{độ mượt} (SPARC và độ giật chuẩn hoá) phản ánh \emph{chất lượng} điều khiển vận động --- một dấu hiệu quan trọng trong đánh giá phục hồi chức năng thần kinh--cơ.
+
+\subsection{Phân tích phổ và tầm vận động}
+Phổ tần số được tính bằng FFT radix-2 (Cooley--Tukey) kết hợp cửa sổ Hanning trong lớp \texttt{SignalProcessing}. Cửa sổ Hanning được nhân với chuỗi góc trước khi biến đổi nhằm giảm hiện tượng rò phổ (spectral leakage) do cắt đoạn tín hiệu hữu hạn; vì thuật toán radix-2 yêu cầu độ dài là luỹ thừa của $2$, chuỗi được đệm không (zero-padding) tới độ dài phù hợp. Sau biến đổi, \emph{tần số chủ đạo} được lấy là vạch phổ có biên độ lớn nhất (sau khi bỏ qua thành phần một chiều), cho biết nhịp lặp của bài tập hoặc tần số run nếu có. Tầm vận động (ROM) của mỗi khớp được tính trực tiếp trên miền thời gian, là biên độ dao động (hiệu giữa giá trị lớn nhất và nhỏ nhất) của góc trong cửa sổ quan sát. Hình~\ref{fig:fft_spectrum} minh hoạ phổ chuyển động hiển thị trên giao diện phần mềm máy chủ.
+
+\begin{figure}[H]
+    \centering
+    \framebox[0.8\textwidth]{\rule{0pt}{5cm}\textit{(Ảnh thực tế: biểu đồ phổ FFT của một chuyển động gập/duỗi vai trên giao diện)}}
+    % \includegraphics[width=0.8\textwidth]{figures/fft_spectrum.png}
+    \caption{Phổ tần số chuyển động hiển thị trên phần mềm máy chủ.}
+    \label{fig:fft_spectrum}
+\end{figure}
+
+\subsection{Chỉ số độ mượt SPARC}
+Độ mượt chuyển động được lượng hoá bằng SPARC (Spectral Arc Length) theo công thức đã nêu ở Mục~\ref{sec:xulytinhieu}:
+\begin{equation}
+    \mathrm{SPARC} = -\int_{0}^{\omega_c}\sqrt{\left(\frac{1}{\omega_c}\right)^2 + \left(\frac{d\hat{V}(\omega)}{d\omega}\right)^2}\,d\omega,
+    \label{eq:sparc_impl}
+\end{equation}
+với $\hat{V}(\omega)$ là phổ biên độ \emph{của vận tốc góc} đã chuẩn hoá theo giá trị cực đại. Về ý nghĩa, SPARC đo chiều dài cung của đường cong phổ vận tốc đã chuẩn hoá: chuyển động càng mượt thì phổ càng gọn và trơn nên chiều dài cung càng ngắn, khiến giá trị SPARC (mang dấu âm) càng \emph{gần $0$}; ngược lại, chuyển động giật cục sinh nhiều thành phần tần số cao làm cung dài ra và SPARC càng âm. Để tính chỉ số này, trước hết vận tốc góc được suy từ đạo hàm của chuỗi góc theo thời gian rồi được lọc lại bằng bộ lọc thông thấp (tần số cắt $\approx 10\,\si{Hz}$) nhằm khử nhiễu vi phân, sau đó mới đưa vào biến đổi phổ.
+
+Một điểm cần làm rõ về mặt hiện thực là trong mã nguồn tồn tại \emph{hai} cài đặt SPARC khác nhau (Bảng~\ref{tab:sparc_impl}): bản \texttt{SignalProcessing.sparc} dùng FFT kèm cửa sổ Hanning, phục vụ hàm thống kê \texttt{getStats} và biểu đồ FFT; trong khi bản \texttt{ChartViewModel.\_computeSPARC} --- vốn là giá trị SPARC \emph{hiển thị trên trang phân tích lâm sàng} --- lại dùng DFT trực tiếp $O(N^2)$, không cửa sổ Hanning, và có thêm số hạng $(1/\omega_c)^2$. Cả hai đều dùng tần số cắt $\omega_c = 20\,\si{Hz}$; con số $10\,\si{Hz}$ đôi khi gặp trong mã chỉ là tần số cắt của bước \emph{lọc lại vận tốc góc}, không phải của SPARC. Việc thống nhất hai cài đặt này là một cải tiến nên thực hiện.
+
+\begin{table}[H]
+    \centering
+    \caption{Hai cài đặt SPARC trong mã nguồn.}
+    \label{tab:sparc_impl}
+    \begin{tabular}{p{3.6cm} p{4.6cm} p{4.6cm}}
+        \toprule
+        \textbf{Tiêu chí}        & \textbf{\texttt{SignalProcessing.sparc}} & \textbf{\texttt{ChartViewModel.\_computeSPARC}} \\
+        \midrule
+        Biến đổi phổ             & FFT radix-2 (Cooley--Tukey)              & DFT trực tiếp $O(N^2)$                          \\
+        Cửa sổ                   & Hanning                                  & Không                                           \\
+        Tần số cắt $\omega_c$    & $20\,\si{Hz}$                            & $20\,\si{Hz}$                                   \\
+        Số hạng $(1/\omega_c)^2$ & Theo arc-length                          & Có                                              \\
+        Dùng cho                 & \texttt{getStats} + biểu đồ FFT          & SPARC trên trang lâm sàng                       \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Độ giật chuẩn hoá}
+Bên cạnh SPARC, hệ thống tính thêm độ giật chuẩn hoá (Normalized Jerk) ở dạng log-dimensionless (LDLJ). Độ giật (jerk) là đạo hàm bậc ba của vị trí góc theo thời gian; tích phân bình phương độ giật trên toàn chuyển động cho biết tổng mức ``thay đổi đột ngột'' của gia tốc. Để chỉ số không phụ thuộc vào thời lượng và biên độ chuyển động, giá trị này được chuẩn hoá theo thời lượng và tốc độ đỉnh rồi lấy logarit, tạo thành LDLJ --- một đại lượng không thứ nguyên và mang dấu âm, càng âm thì chuyển động càng kém mượt. LDLJ và SPARC bổ trợ cho nhau: SPARC bền vững với nhiễu đo nhờ làm việc trên miền phổ, còn LDLJ nhạy hơn với các thay đổi cục bộ trên miền thời gian; dùng đồng thời hai chỉ số giúp đánh giá độ trơn tru của chuyển động phục hồi một cách toàn diện hơn.
+
+
+\end{document}

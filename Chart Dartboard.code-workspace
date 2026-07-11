@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "C:/Users/Lenovo/Documents/Calib"
+		},
+		{
+			"path": "../../../DATN"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "Chart Dartboard"
+	}
+}

@@ -39,6 +39,14 @@ export class BluetoothService {
     this._reconnectAttempts = 0;
     this._reconnectTimer = null;
 
+    // Network stats tracking
+    this._networkStats = {
+      startTime: 0,
+      totalFrames: 0,
+      validFrames: 0,
+      lastLogTime: 0
+    };
+
     // Binary accumulation buffer (handles BLE MTU fragmentation)
     this._binBuffer = new Uint8Array(256); // Ring buffer
     this._binLen = 0;                       // Current bytes in buffer
@@ -85,6 +93,7 @@ export class BluetoothService {
         console.log('[BLE] Found previously connected device:', espDevice.name);
         
         // Thử kết nối ngay lập tức (nếu ESP32 đang bật sẵn)
+        this._reconnectAttempts = 0;
         const success = await this._connectToDevice(espDevice);
         if (success) return true;
 
@@ -95,6 +104,7 @@ export class BluetoothService {
           espDevice.addEventListener('advertisementreceived', async (event) => {
             console.log('[BLE] Detected ESP32 signal! Auto-connecting...');
             espDevice.unwatchAdvertisements(); // Dừng quét
+            this._reconnectAttempts = 0;
             await this._connectToDevice(espDevice);
           });
 
@@ -132,6 +142,7 @@ export class BluetoothService {
         optionalServices: [NUS_SERVICE_UUID],
       });
 
+      this._reconnectAttempts = 0;
       return await this._connectToDevice(device);
 
     } catch (error) {
@@ -156,7 +167,6 @@ export class BluetoothService {
       this._setState(ConnectionState.CONNECTING);
       this._bleDevice = device;
       this._shouldAutoReconnect = true; // Enable auto-reconnect once intentionally connected
-      this._reconnectAttempts = 0;
 
       // Xóa listener cũ (nếu có) để tránh duplicate
       this._bleDevice.removeEventListener('gattserverdisconnected', this._onDisconnectHandler);
@@ -178,6 +188,7 @@ export class BluetoothService {
 
       this._mode = 'ble';
       this._setState(ConnectionState.CONNECTED);
+      this._reconnectAttempts = 0; // Reset upon successful connection
       console.log('[BLE] ✅ Connected to', this._bleDevice.name);
       return true;
 
@@ -208,6 +219,11 @@ export class BluetoothService {
    * @private
    */
   _attemptReconnect() {
+    if (this._reconnectTimer) {
+      // Reconnect timer already scheduled, do not schedule another one
+      return;
+    }
+
     this._reconnectAttempts++;
     if (this._reconnectAttempts > 10) {
       console.log('[BLE] Max reconnect attempts reached. Giving up.');
@@ -220,8 +236,8 @@ export class BluetoothService {
     console.log(`[BLE] Auto-reconnecting in ${delayMs}ms... (Attempt ${this._reconnectAttempts})`);
     this._setState(ConnectionState.CONNECTING);
 
-    clearTimeout(this._reconnectTimer);
     this._reconnectTimer = setTimeout(async () => {
+      this._reconnectTimer = null; // Clear timer reference before starting the connect attempt
       console.log('[BLE] Reconnecting now...');
       try {
         const success = await this._connectToDevice(this._bleDevice);
@@ -238,6 +254,11 @@ export class BluetoothService {
   }
 
   _onBLEData(event) {
+    if (this._networkStats.startTime === 0) {
+      this._networkStats.startTime = Date.now();
+      this._networkStats.lastLogTime = Date.now();
+    }
+
     const dataView = event.target.value; // DataView from BLE
     const incoming = new Uint8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
 
@@ -389,6 +410,8 @@ export class BluetoothService {
    * @private
    */
   _parseBinaryFrame(dv) {
+    this._networkStats.totalFrames++;
+
     // Verify XOR checksum
     const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
     let chk = 0;
@@ -396,8 +419,12 @@ export class BluetoothService {
     if (chk !== dv.getUint8(78)) {
       console.warn('[BLE] Bad checksum, expected', chk, 'got', dv.getUint8(78));
       eventBus.emit(Events.RAW_DATA_RECEIVED, `[BLE ERR] Bad checksum: ${chk} != ${dv.getUint8(78)}`);
+      this._logNetworkStats();
       return null;
     }
+
+    this._networkStats.validFrames++;
+    this._logNetworkStats();
 
     const activeMask = dv.getUint8(1);
     const timestamp = dv.getUint32(2, true); // little-endian
@@ -412,16 +439,41 @@ export class BluetoothService {
       if (!segment) continue;
 
       readings[segment] = new IMUReading(
-        dv.getInt16(offset, true)     / 4096,   // ax (±8g scale)
-        dv.getInt16(offset + 2, true) / 4096,   // ay
-        dv.getInt16(offset + 4, true) / 4096,   // az
-        dv.getInt16(offset + 6, true) / 32.8,   // gx (±1000°/s scale)
-        dv.getInt16(offset + 8, true) / 32.8,   // gy
-        dv.getInt16(offset + 10, true) / 32.8    // gz
+        dv.getInt16(offset, true)     / 16384,  // ax (±2g → 16384 LSB/g)
+        dv.getInt16(offset + 2, true) / 16384,  // ay
+        dv.getInt16(offset + 4, true) / 16384,  // az
+        dv.getInt16(offset + 6, true) / 131,    // gx (±250°/s → 131 LSB/°/s)
+        dv.getInt16(offset + 8, true) / 131,    // gy
+        dv.getInt16(offset + 10, true) / 131     // gz
       );
     }
 
     return { timestamp, readings, mode: 'raw', activeMask };
+  }
+
+  _logNetworkStats() {
+    const now = Date.now();
+    if (now - this._networkStats.lastLogTime >= 5000) {
+      this._networkStats.lastLogTime = now;
+      const elapsedSec = (now - this._networkStats.startTime) / 1000;
+      if (elapsedSec <= 0) return;
+      
+      const expectedFrames = elapsedSec * 50; // 50 Hz
+      const actualRate = this._networkStats.totalFrames / elapsedSec;
+      const lossRate = Math.max(0, (1 - (this._networkStats.totalFrames / expectedFrames)) * 100);
+      const validRate = this._networkStats.totalFrames > 0 ? (this._networkStats.validFrames / this._networkStats.totalFrames) * 100 : 0;
+      const invalidCount = this._networkStats.totalFrames - this._networkStats.validFrames;
+      
+      console.log(`\n========== [NETWORK STATS] ==========
+- Thời gian chạy     : ${elapsedSec.toFixed(1)} giây
+- Tổng khung nhận    : ${this._networkStats.totalFrames}
+- Tần số cập nhật    : ${actualRate.toFixed(2)} Hz (mong đợi ~50 Hz)
+- Tỉ lệ mất gói      : ${lossRate.toFixed(2)} %
+- Khung hợp lệ       : ${this._networkStats.validFrames}
+- Lỗi checksum       : ${invalidCount}
+- Tỉ lệ khung hợp lệ : ${validRate.toFixed(2)} %
+=====================================\n`);
+    }
   }
 
   /** Cleanup BLE resources */
@@ -430,6 +482,13 @@ export class BluetoothService {
     this._bleServer = null;
     this._mode = null;
     this._buffer = '';
+
+    this._networkStats = {
+      startTime: 0,
+      totalFrames: 0,
+      validFrames: 0,
+      lastLogTime: 0
+    };
   }
 
   // ═══════════════════════════════════════════════
@@ -539,6 +598,7 @@ export class BluetoothService {
   async disconnect() {
     this._shouldAutoReconnect = false;
     clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = null;
     
     if (this._mode === 'ble') {
       this._cleanupBLE();

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../../../DATN"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "Chart Dartboard"
+	}
+}

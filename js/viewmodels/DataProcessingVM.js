@@ -77,7 +77,29 @@ export class DataProcessingViewModel {
       console.log(`[DataProcessing] Data mode detected: ${this._dataMode}`);
     }
 
-    // Step 3: Route to appropriate pipeline
+    // Step 3: Handle calibration intercept
+    if (this.fusion.isCalibrating) {
+      if (parsed.mode === 'orientation') {
+        const done = this.fusion.processOrientationCalibration(parsed.orientations);
+        eventBus.emit(Events.CALIBRATION_PROGRESS, this.fusion.calibrationProgress);
+        if (done) {
+          eventBus.emit(Events.CALIBRATION_COMPLETE);
+        }
+      } else {
+        let readings = parsed.readings;
+        if (this._lowPassEnabled) {
+          readings = this._applyLowPass(readings);
+        }
+        const done = this.fusion.processCalibration(readings);
+        eventBus.emit(Events.CALIBRATION_PROGRESS, this.fusion.calibrationProgress);
+        if (done) {
+          eventBus.emit(Events.CALIBRATION_COMPLETE);
+        }
+      }
+      return; // Don't process further during calibration
+    }
+
+    // Step 4: Route to appropriate pipeline
     if (parsed.mode === 'orientation') {
       this._processOrientation(parsed, relativeTime);
     } else {
@@ -93,10 +115,19 @@ export class DataProcessingViewModel {
    * @private
    */
   _processOrientation(parsed, relativeTime) {
-    // Convert to Orientation objects
+    // Convert to Orientation objects and subtract offsets
     const orientations = {};
     for (const [segment, o] of Object.entries(parsed.orientations)) {
-      orientations[segment] = new Orientation(o.roll, o.pitch, o.yaw);
+      const state = this.fusion._states[segment];
+      if (state) {
+        // Round to 2 decimal places to match complementary filter output
+        const roll = Math.round((o.roll - state.offsetRoll) * 100) / 100;
+        const pitch = Math.round((o.pitch - state.offsetPitch) * 100) / 100;
+        const yaw = Math.round((o.yaw - state.offsetYaw) * 100) / 100;
+        orientations[segment] = new Orientation(roll, pitch, yaw);
+      } else {
+        orientations[segment] = new Orientation(o.roll, o.pitch, o.yaw);
+      }
     }
 
     // Compute joint angles from orientations
@@ -139,8 +170,8 @@ export class DataProcessingViewModel {
       return; // Don't process data during calibration
     }
 
-    // Step 5: Sensor fusion (Complementary Filter)
-    const { orientations, jointAngles } = this.fusion.process(readings);
+    // Step 5: Sensor fusion (Madgwick) — pass the frame timestamp for real Δt
+    const { orientations, jointAngles } = this.fusion.process(readings, parsed.timestamp);
 
     // Step 6: Create complete sample
     const sample = new SensorDataSample(
@@ -182,6 +213,21 @@ export class DataProcessingViewModel {
     this.parser.lastRawLine = `[BINARY 80B] Nodes: ${activeNodes.join(',')} | TS: ${parsed.timestamp}ms`;
     // -----------------------------------------------------------
 
+    if (this.fusion.isCalibrating) {
+      if (parsed.mode === 'orientation') {
+        const done = this.fusion.processOrientationCalibration(parsed.orientations);
+        eventBus.emit(Events.CALIBRATION_PROGRESS, this.fusion.calibrationProgress);
+        if (done) eventBus.emit(Events.CALIBRATION_COMPLETE);
+      } else {
+        let readings = parsed.readings;
+        if (this._lowPassEnabled) readings = this._applyLowPass(readings);
+        const done = this.fusion.processCalibration(readings);
+        eventBus.emit(Events.CALIBRATION_PROGRESS, this.fusion.calibrationProgress);
+        if (done) eventBus.emit(Events.CALIBRATION_COMPLETE);
+      }
+      return;
+    }
+
     if (parsed.mode === 'orientation') {
       this._processOrientation(parsed, relativeTime);
       return;
@@ -191,17 +237,10 @@ export class DataProcessingViewModel {
     let readings = parsed.readings;
     if (this._lowPassEnabled) readings = this._applyLowPass(readings);
 
-    if (this.fusion.isCalibrating) {
-      const done = this.fusion.processCalibration(readings);
-      eventBus.emit(Events.CALIBRATION_PROGRESS, this.fusion.calibrationProgress);
-      if (done) eventBus.emit(Events.CALIBRATION_COMPLETE);
-      return;
-    }
-
-    const { orientations, jointAngles } = this.fusion.process(readings);
+    const { orientations, jointAngles, calibrated } = this.fusion.process(readings, parsed.timestamp);
     const sample = new SensorDataSample(
       relativeTime, this._frameCounter++,
-      readings, orientations, jointAngles
+      readings, orientations, jointAngles, calibrated
     );
 
     this.session.addSample(sample);
@@ -281,11 +320,11 @@ export class DataProcessingViewModel {
   }
 
   /**
-   * Set complementary filter alpha
-   * @param {number} alpha
+   * Set Madgwick filter beta gain
+   * @param {number} beta
    */
-  setFusionAlpha(alpha) {
-    this.fusion.setAlpha(alpha);
+  setFusionBeta(beta) {
+    this.fusion.setBeta(beta);
   }
 
   /**
@@ -316,7 +355,7 @@ export class DataProcessingViewModel {
   startRecording(patientName) {
     this.session.startRecording();
     this.wsClient.startSession(patientName);
-    eventBus.emit(Events.RECORDING_STARTED);
+    eventBus.emit(Events.RECORDING_STARTED, { patientName });
   }
 
   /**
@@ -348,7 +387,7 @@ export class DataProcessingViewModel {
       dataMode: this._dataMode || 'N/A',
       lowPassEnabled: this._lowPassEnabled,
       lowPassAlpha: this._lowPassAlpha,
-      fusionAlpha: this.fusion.alpha,
+      fusionBeta: this.fusion.beta,
     };
   }
 

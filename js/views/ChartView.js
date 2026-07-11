@@ -5,74 +5,153 @@
 
 import { CHART_CONFIG } from '../utils/Constants.js';
 
-// Chart.js default configuration for dark theme
-const CHART_DEFAULTS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: { duration: CHART_CONFIG.ANIMATION_DURATION },
-  interaction: {
-    mode: 'nearest',
-    axis: 'x',
-    intersect: false,
-  },
-  plugins: {
-    legend: {
-      display: true,
-      position: 'top',
-      align: 'end',
-      labels: {
-        color: 'rgba(148, 163, 184, 0.8)',
-        font: { family: CHART_CONFIG.FONT_FAMILY, size: CHART_CONFIG.FONT_SIZE },
-        boxWidth: 12,
-        boxHeight: 2,
-        padding: 12,
-        usePointStyle: false,
-      },
-    },
-    tooltip: {
-      backgroundColor: 'rgba(15, 23, 42, 0.95)',
-      titleColor: '#f1f5f9',
-      bodyColor: '#94a3b8',
-      borderColor: 'rgba(99, 102, 241, 0.3)',
-      borderWidth: 1,
-      cornerRadius: 8,
-      padding: 10,
-      titleFont: { family: CHART_CONFIG.FONT_FAMILY, size: 12, weight: '600' },
-      bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
-      displayColors: true,
-      boxWidth: 8,
-      boxHeight: 8,
-      boxPadding: 4,
-    },
-  },
-  scales: {
-    x: {
-      grid: {
-        color: CHART_CONFIG.GRID_COLOR,
-        drawBorder: false,
-      },
-      ticks: {
-        color: CHART_CONFIG.TICK_COLOR,
-        font: { family: CHART_CONFIG.FONT_FAMILY, size: 10 },
-        maxTicksLimit: 10,
-        maxRotation: 0,
-      },
-      border: { display: false },
-    },
-    y: {
-      grid: {
-        color: CHART_CONFIG.GRID_COLOR,
-        drawBorder: false,
-      },
-      ticks: {
-        color: CHART_CONFIG.TICK_COLOR,
-        font: { family: CHART_CONFIG.FONT_FAMILY, size: 10 },
-        maxTicksLimit: 6,
-      },
-      border: { display: false },
-    },
+/**
+ * Global plugin for the clinical replay: draws a synchronized time cursor
+ * (vertical line), spike markers along the bottom, and a highlighted point on
+ * the phase portrait. Charts opt in by setting `$cursorFrac` / `$spikeFracs` /
+ * `$cursorPoint` on the instance; it no-ops otherwise.
+ */
+const ClinicalCursorPlugin = {
+  id: 'clinicalCursor',
+  afterDraw(chart) {
+    const area = chart.chartArea;
+    if (!area) return;
+    const ctx = chart.ctx;
+
+    // Spike markers: small red triangles at the bottom of the plot
+    const spikes = chart.$spikeFracs;
+    if (Array.isArray(spikes) && spikes.length) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(239,68,68,0.85)';
+      for (const f of spikes) {
+        const x = area.left + f * (area.right - area.left);
+        ctx.beginPath();
+        ctx.moveTo(x, area.bottom - 8);
+        ctx.lineTo(x - 4, area.bottom);
+        ctx.lineTo(x + 4, area.bottom);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // Time cursor (line/bar charts)
+    const f = chart.$cursorFrac;
+    if (typeof f === 'number' && f >= 0) {
+      const x = area.left + f * (area.right - area.left);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(x, area.top);
+      ctx.lineTo(x, area.bottom);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(56,189,248,0.95)';
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Cursor point in data space (phase portrait)
+    const p = chart.$cursorPoint;
+    if (p && chart.scales.x && chart.scales.y) {
+      const px = chart.scales.x.getPixelForValue(p.x);
+      const py = chart.scales.y.getPixelForValue(p.y);
+      if (!isNaN(px) && !isNaN(py)) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(px, py, 5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(56,189,248,0.95)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#ffffff';
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   },
 };
+if (typeof Chart !== 'undefined') Chart.register(ClinicalCursorPlugin);
+
+/**
+ * Read the current theme's chart colors from CSS custom properties so charts
+ * follow light/dark switching. Falls back to dark defaults if unset.
+ */
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name, fallback) => {
+    const val = cs.getPropertyValue(name).trim();
+    return val || fallback;
+  };
+  return {
+    grid: v('--chart-grid', CHART_CONFIG.GRID_COLOR),
+    tick: v('--chart-tick', CHART_CONFIG.TICK_COLOR),
+    text: v('--chart-text', '#aab4c8'),
+    primary: v('--color-text-primary', '#f1f5f9'),
+    tooltipBg: v('--chart-tooltip-bg', '#1b2540'),
+    accent: v('--color-accent-primary', '#6366f1'),
+  };
+}
+
+// Build Chart.js default options using the *current* theme colors.
+function buildDefaults() {
+  const t = themeColors();
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: CHART_CONFIG.ANIMATION_DURATION },
+    interaction: { mode: 'nearest', axis: 'x', intersect: false },
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top',
+        align: 'end',
+        labels: {
+          color: t.text,
+          font: { family: CHART_CONFIG.FONT_FAMILY, size: CHART_CONFIG.FONT_SIZE },
+          boxWidth: 12,
+          boxHeight: 2,
+          padding: 12,
+          usePointStyle: false,
+        },
+      },
+      tooltip: {
+        backgroundColor: t.tooltipBg,
+        titleColor: t.primary,
+        bodyColor: t.text,
+        borderColor: t.accent,
+        borderWidth: 1,
+        cornerRadius: 8,
+        padding: 10,
+        titleFont: { family: CHART_CONFIG.FONT_FAMILY, size: 12, weight: '600' },
+        bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+        displayColors: true,
+        boxWidth: 8,
+        boxHeight: 8,
+        boxPadding: 4,
+      },
+    },
+    scales: {
+      x: {
+        grid: { color: t.grid, drawBorder: false },
+        ticks: {
+          color: t.tick,
+          font: { family: CHART_CONFIG.FONT_FAMILY, size: 10 },
+          maxTicksLimit: 10,
+          maxRotation: 0,
+        },
+        border: { display: false },
+      },
+      y: {
+        grid: { color: t.grid, drawBorder: false },
+        ticks: {
+          color: t.tick,
+          font: { family: CHART_CONFIG.FONT_FAMILY, size: 10 },
+          maxTicksLimit: 6,
+        },
+        border: { display: false },
+      },
+    },
+  };
+}
 
 export class ChartView {
   constructor() {
@@ -91,6 +170,7 @@ export class ChartView {
     if (this._charts.has(id)) {
       this._charts.get(id).destroy();
     }
+    const CHART_DEFAULTS = buildDefaults();
 
     const config = {
       type: 'line',
@@ -128,6 +208,7 @@ export class ChartView {
     if (this._charts.has(id)) {
       this._charts.get(id).destroy();
     }
+    const CHART_DEFAULTS = buildDefaults();
 
     const config = {
       type: 'bar',
@@ -167,6 +248,7 @@ export class ChartView {
     if (this._charts.has(id)) {
       this._charts.get(id).destroy();
     }
+    const CHART_DEFAULTS = buildDefaults();
 
     const config = {
       type: 'scatter',
@@ -200,6 +282,8 @@ export class ChartView {
     if (this._charts.has(id)) {
       this._charts.get(id).destroy();
     }
+    const CHART_DEFAULTS = buildDefaults();
+    const t = themeColors();
 
     const config = {
       type: 'radar',
@@ -210,15 +294,15 @@ export class ChartView {
         animation: { duration: 0 },
         scales: {
           r: {
-            grid: { color: CHART_CONFIG.GRID_COLOR },
-            angleLines: { color: CHART_CONFIG.GRID_COLOR },
+            grid: { color: t.grid },
+            angleLines: { color: t.grid },
             ticks: {
-              color: CHART_CONFIG.TICK_COLOR,
+              color: t.tick,
               backdropColor: 'transparent',
               font: { size: 9 },
             },
             pointLabels: {
-              color: 'rgba(148, 163, 184, 0.8)',
+              color: t.text,
               font: { family: CHART_CONFIG.FONT_FAMILY, size: 10 },
             },
           },
@@ -247,12 +331,20 @@ export class ChartView {
       chart.data.labels = data.labels;
     }
 
+    // Style props that a data generator may change between updates (e.g. when the
+    // clinical joint or selected rep changes). Refresh them on existing datasets
+    // so stale closures/colors don't linger from a previous render.
+    const REFRESH_KEYS = ['borderColor', 'backgroundColor', 'segment', 'showLine',
+      'borderDash', 'borderWidth', 'pointRadius', 'pointStyle', 'type'];
+
     // Update datasets
     for (let i = 0; i < data.datasets.length; i++) {
       if (chart.data.datasets[i]) {
-        chart.data.datasets[i].data = data.datasets[i].data;
-        if (data.datasets[i].label) {
-          chart.data.datasets[i].label = data.datasets[i].label;
+        const cur = chart.data.datasets[i];
+        cur.data = data.datasets[i].data;
+        if (data.datasets[i].label) cur.label = data.datasets[i].label;
+        for (const k of REFRESH_KEYS) {
+          if (k in data.datasets[i]) cur[k] = data.datasets[i][k];
         }
       } else {
         // Apply default line styling
@@ -282,6 +374,30 @@ export class ChartView {
    */
   getChart(id) {
     return this._charts.get(id);
+  }
+
+  /** Set the synchronized time cursor (0..1 across the plot, or null to clear). */
+  setTimeCursor(id, frac) {
+    const c = this._charts.get(id);
+    if (!c) return;
+    c.$cursorFrac = frac;
+    c.draw();
+  }
+
+  /** Set the phase-portrait cursor point in data coords ({x,y}, or null). */
+  setPointCursor(id, point) {
+    const c = this._charts.get(id);
+    if (!c) return;
+    c.$cursorPoint = point;
+    c.draw();
+  }
+
+  /** Set spike markers (array of 0..1 fractions) along the bottom of a chart. */
+  setSpikeMarkers(id, fracs) {
+    const c = this._charts.get(id);
+    if (!c) return;
+    c.$spikeFracs = fracs;
+    c.draw();
   }
 
   /**

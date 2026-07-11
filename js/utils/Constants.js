@@ -90,9 +90,32 @@ export const NORMAL_ROM = {
 
 // ── Sensor Fusion Configuration ──
 export const FUSION_CONFIG = {
-  COMPLEMENTARY_ALPHA: 0.96,    // Gyro trust factor (0.90 - 0.98)
+  MADGWICK_BETA: 0.1,             // Madgwick filter gain (0.01=smooth, 0.5=responsive)
+  MADGWICK_SAMPLE_HZ: 50,        // Must match actual BLE frame rate
   LOWPASS_ALPHA: 0.2,           // Low-pass filter coefficient
   CALIBRATION_SAMPLES: 200,     // Samples for gyro calibration (4 seconds at 50Hz)
+
+  // ── ZARU (Zero Angular Rate Update) — bù trôi bias gyro lúc chạy ──
+  // Khi cảm biến đứng yên, vận tốc góc thật = 0 nên gyro đo được CHÍNH LÀ bias.
+  // ZARU theo dõi và cập nhật chậm gyroBias để bù trôi nhiệt/thời gian (Wang 2024:
+  // "scale factor và bias đổi mỗi lần khởi động / theo điều kiện môi trường").
+  ZARU_ENABLED: true,
+  ZARU_GYRO_THRESH_DPS: 1.5,    // |ω| < ngưỡng (°/s) thì coi là đứng yên
+  ZARU_ACCEL_TOL_MS2: 0.6,      // |‖a‖ − g| < ngưỡng (m/s²) để chắc chắn không chuyển động
+  ZARU_MIN_SAMPLES: 25,         // số mẫu đứng yên liên tục trước khi bắt đầu cập nhật
+  ZARU_ALPHA: 0.02,             // hệ số low-pass cập nhật bias (nhỏ = bám chậm, mượt)
+
+  // ── Tích phân theo Δt thực (thay vì giả định cố định 1/sampleFreq) ──
+  // Δt đo từ timestamp của master; kẹp trong [MIN,MAX] để 1 lần rớt gói / khe TDMA
+  // không gây bước tích phân quá lớn (≈ tối đa 3 frame ở 50Hz).
+  DT_MIN_S: 0.002,
+  DT_MAX_S: 0.075,
+
+  // ── Khử trôi yaw cho góc lệch cổ tay (wrist deviation) ──
+  // MPU6050 không có từ kế → yaw chỉ tích phân gyro nên trôi chậm. Lệch cổ tay
+  // (hiệu yaw) vì thế tự trôi. High-pass rò rỉ kéo baseline về 0 với hằng số thời
+  // gian ≈ 1/leak mẫu (0.002 → ~10s @50Hz): bỏ trôi chậm, giữ cử động thật.
+  YAW_DRIFT_LEAK: 0.002,
 };
 
 // ── Connection States ──
@@ -120,12 +143,17 @@ export const Events = Object.freeze({
   RECORDING_STARTED: 'session:recordingStarted',
   RECORDING_STOPPED: 'session:recordingStopped',
   SESSION_EXPORTED: 'session:exported',
+  SESSIONS_CHANGED: 'session:storeChanged',
 
   // UI
   TAB_CHANGED: 'ui:tabChanged',
   CHART_RESIZED: 'ui:chartResized',
   FILTER_CHANGED: 'ui:filterChanged',
   THEME_CHANGED: 'ui:themeChanged',
+
+  // Exercise Guide
+  EXERCISE_GUIDE_START: 'exercise:guideStart',
+  EXERCISE_GUIDE_STOP: 'exercise:guideStop',
 });
 
 // ── Navigation Pages ──
@@ -136,16 +164,75 @@ export const Pages = Object.freeze({
   ROM: 'rom',
   CLINICAL: 'clinical',
   DATA_TABLE: 'data-table',
+  TRACKING_3D: '3d-tracking',
   SETTINGS: 'settings',
 });
 
 export const PAGE_CONFIG = {
-  [Pages.DASHBOARD]: { icon: '📊', label: 'Dashboard', section: 'overview' },
-  [Pages.RAW_DATA]: { icon: '📈', label: 'Raw Sensor Data', section: 'charts' },
-  [Pages.ANGLE]: { icon: '📐', label: 'Angle (RPY & Joints)', section: 'charts' },
-  [Pages.ROM]: { icon: '🔄', label: 'Range of Motion', section: 'charts' },
-  [Pages.CLINICAL]: { icon: '🩺', label: 'Phân tích Lâm sàng', section: 'charts' },
-  [Pages.DATA_TABLE]: { icon: '📋', label: 'Data Table', section: 'data' },
-  [Pages.SETTINGS]: { icon: '⚙️', label: 'Settings', section: 'system' },
+  [Pages.DASHBOARD]: { label: 'Tổng quan' },
+  [Pages.RAW_DATA]: { label: 'Dữ liệu cảm biến' },
+  [Pages.ANGLE]: { label: 'Góc khớp (RPY & Khớp)' },
+  [Pages.ROM]: { label: 'Phạm vi chuyển động' },
+  [Pages.CLINICAL]: { label: 'Phân tích lâm sàng' },
+  [Pages.TRACKING_3D]: { label: 'Theo dõi trực tiếp' },
+  [Pages.DATA_TABLE]: { label: 'Bảng dữ liệu' },
+  history: { label: 'Lịch sử buổi tập (CSDL)' },
+  sessions: { label: 'Buổi tập' },
+  [Pages.SETTINGS]: { label: 'Cài đặt' },
 };
+
+// ── User Roles (giao diện phân vai) ──
+export const Roles = Object.freeze({
+  PATIENT: 'patient',
+  DOCTOR: 'doctor',
+});
+
+export const ROLE_LABELS = {
+  [Roles.PATIENT]: 'Bệnh nhân',
+  [Roles.DOCTOR]: 'Bác sĩ',
+};
+
+/**
+ * Sidebar navigation grouped into sections, each visible only to the given roles.
+ * The sidebar is rendered from this structure (no static HTML / no emoji).
+ */
+export const NAV_SECTIONS = [
+  {
+    label: 'Tổng quan',
+    roles: [Roles.PATIENT, Roles.DOCTOR],
+    items: [{ page: Pages.DASHBOARD, label: 'Tổng quan' }],
+  },
+  {
+    label: 'Theo dõi & Tập luyện',
+    roles: [Roles.PATIENT],
+    items: [
+      { page: Pages.TRACKING_3D, label: 'Theo dõi trực tiếp' },
+      { page: Pages.ANGLE, label: 'Góc khớp' },
+      { page: 'sessions', label: 'Buổi tập của tôi' },
+    ],
+  },
+  {
+    label: 'Phân tích lâm sàng',
+    roles: [Roles.DOCTOR],
+    items: [
+      { page: Pages.CLINICAL, label: 'Phân tích lâm sàng' },
+      { page: Pages.ROM, label: 'Phạm vi chuyển động' },
+    ],
+  },
+  {
+    label: 'Buổi tập & Dữ liệu',
+    roles: [Roles.DOCTOR],
+    items: [
+      { page: 'sessions', label: 'Buổi tập (cục bộ)' },
+      { page: 'history', label: 'Lịch sử (CSDL)' },
+      { page: Pages.RAW_DATA, label: 'Dữ liệu cảm biến' },
+      { page: Pages.DATA_TABLE, label: 'Bảng dữ liệu' },
+    ],
+  },
+  {
+    label: 'Hệ thống',
+    roles: [Roles.PATIENT, Roles.DOCTOR],
+    items: [{ page: Pages.SETTINGS, label: 'Cài đặt' }],
+  },
+];
 

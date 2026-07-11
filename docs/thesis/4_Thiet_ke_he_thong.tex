@@ -1,0 +1,1011 @@
+\documentclass[../DoAn.tex]{subfiles}
+\begin{document}
+
+% =====================================================================
+% CHƯƠNG 3 — THIẾT KẾ HỆ THỐNG
+% =====================================================================
+\chapter{Thiết kế hệ thống}
+\label{chap:thietke}
+
+Trên nền tảng lý thuyết đã trình bày ở chương trước -- từ đặc tính và mô hình sai
+số của cảm biến quán tính (Mục~\ref{sec:imu_mpu6050}), biểu diễn hướng bằng
+quaternion (Mục~\ref{sec:quaternion}), thuật toán hợp nhất Madgwick
+(Mục~\ref{sec:madgwick}), quy trình hiệu chuẩn (Mục~\ref{sec:hieuchuan}) cho tới
+mô hình động học chi trên (Mục~\ref{sec:donghoc}) -- chương này trình bày thiết
+kế của hệ thống theo dõi vận động chi trên sử dụng sáu cảm biến MPU6050. Nội dung
+chương đi từ phân tích yêu cầu và đặc tả kỹ thuật, qua kiến trúc tổng thể, rồi
+đến thiết kế chi tiết phần cứng, đường truyền không dây và phần mềm phía máy tính. Mỗi quyết định thiết kế đều được biện giải dựa trên các yêu cầu
+đặt ra và các ràng buộc lý thuyết đã phân tích, nhằm bảo đảm tính nhất quán giữa
+cơ sở khoa học và sản phẩm hiện thực. Mục đầu tiên dưới đây xác lập tập yêu cầu và
+các chỉ tiêu kỹ thuật mục tiêu, làm cơ sở cho mọi lựa chọn thiết kế và cho việc
+đánh giá kết quả ở Chương~\ref{chap:ketqua}.
+
+% ---------------------------------------------------------------------
+\section{Phân tích yêu cầu và đặc tả hệ thống}
+\label{sec:yeucau}
+% ---------------------------------------------------------------------
+Xác định rõ yêu cầu là bước khởi đầu của quá trình thiết kế: nó định hướng các
+quyết định kỹ thuật và thiết lập tiêu chí nghiệm thu khách quan cho hệ thống.
+Xuất phát từ bài toán hỗ trợ theo dõi và đánh giá phục hồi chức năng chi trên đã
+nêu ở Chương~1~\cite{bonato2005, maciejasz2014}, các yêu cầu của hệ thống được
+phân thành ba nhóm: yêu cầu chức năng mô tả hệ thống phải làm gì, yêu cầu phi
+chức năng mô tả mức chất lượng mà hệ thống phải đạt, và các ràng buộc thiết kế
+xuất phát từ công nghệ lựa chọn. Ba nhóm này sau đó được cụ thể hoá thành bảng
+đặc tả kỹ thuật mục tiêu ở cuối mục.
+
+\subsection{Yêu cầu chức năng}
+\label{subsec:yc_chucnang}
+Về mặt chức năng, hệ thống cần thực hiện được chuỗi nhiệm vụ sau. (i) Thu thập
+đồng thời số đo gia tốc ba trục và vận tốc góc ba trục từ sáu nút cảm biến quán
+tính gắn trên các đoạn của chi trên, theo cách bố trí đã mô tả ở
+Mục~\ref{subsec:dh_canchinh} (một nút tham chiếu trên thân mình cùng các nút trên
+cánh tay, cẳng tay và bàn tay của bên chi cần đánh giá). (ii) Hiệu chuẩn số đo
+của từng cảm biến theo quy trình ở Mục~\ref{sec:hieuchuan} để loại bỏ phần lớn
+sai số tất định. (iii) Ước lượng hướng của từng đoạn chi dưới dạng quaternion
+bằng thuật toán Madgwick (Mục~\ref{sec:madgwick}). (iv) Tính các góc khớp của
+vai, khuỷu và cổ tay từ hướng tương đối giữa các đoạn chi liền kề theo mô hình
+động học ở Mục~\ref{sec:donghoc}. (v) Trích xuất các chỉ số định lượng phục vụ
+lâm sàng, đặc biệt là tầm vận động (ROM) và độ mượt chuyển động (SPARC). (vi)
+Truyền dữ liệu không dây từ các nút về máy tính, đồng thời hiển thị, lưu trữ và cho
+phép xem lại kết quả theo thời gian thực.
+
+\subsection{Yêu cầu phi chức năng}
+\label{subsec:yc_phichucnang}
+Bên cạnh các chức năng trên, hệ thống phải đáp ứng những yêu cầu về chất lượng.
+(i) \textit{Độ chính xác}: sai số quân phương của góc khớp ước lượng so với hệ đo
+tham chiếu cần đủ nhỏ để có ý nghĩa lâm sàng, với mục tiêu không vượt quá vài độ.
+(ii) \textit{Tần số lấy mẫu}: mỗi nút phải lấy mẫu ở tần số tối thiểu $50$ Hz; vì
+năng lượng của vận động chi trên chủ yếu nằm dưới $10$--$15$ Hz, mức này thoả mãn
+định lý lấy mẫu Nyquist với biên độ dự trữ hợp lý. (iii) \textit{Độ trễ}: độ trễ
+từ lúc cảm biến thu đến lúc hiển thị phải đủ thấp (mục tiêu dưới $100$ ms) để tạo
+phản hồi tức thời cho người tập và kỹ thuật viên. (iv) \textit{Đồng bộ giữa các
+    nút}: sai khác thời gian giữa sáu nút phải nhỏ để bảo đảm các mẫu được ghép cặp
+đúng thời điểm khi tính góc khớp, phù hợp với phân tích ở
+Mục~\ref{sec:xulytinhieu}. (v) \textit{Thời lượng hoạt động}: nguồn pin phải duy
+trì được trọn một buổi tập. (vi) \textit{Tính đeo được}: mỗi nút phải nhỏ gọn,
+nhẹ và cố định chắc trên đoạn chi mà không cản trở vận động tự nhiên. (vii)
+\textit{Chi phí và khả dụng}: hệ thống nên dùng linh kiện phổ biến, giá thành
+thấp để dễ tái tạo và triển khai rộng.
+
+\subsection{Ràng buộc thiết kế}
+\label{subsec:yc_rangbuoc}
+Một số ràng buộc kỹ thuật chi phối trực tiếp các lựa chọn ở những mục sau. (i) Do
+sử dụng MPU6050 với cấu hình sáu bậc tự do không có từ kế, hệ thống không có tham
+chiếu phương vị tuyệt đối, nên trôi góc yaw là ràng buộc cố hữu cần được kìm hãm
+bằng giải pháp xử lý chứ không thể loại bỏ hoàn toàn
+(Mục~\ref{subsec:mpu_hanche}). (ii) Mỗi MPU6050 chỉ hỗ trợ hai địa chỉ I2C cố
+định, nên không thể đặt sáu cảm biến trên cùng một bus I2C dùng chung; ràng buộc
+này dẫn tới lựa chọn kiến trúc phân tán, trong đó mỗi cảm biến được ghép riêng với
+một vi điều khiển ESP32-C3 thành một nút độc lập, và dữ liệu của sáu nút được tổng
+hợp không dây về một ESP32 master.
+(iii) Nền tảng vi điều khiển được chọn là dòng ESP32/ESP32-C3 nhờ tích hợp sẵn
+Wi-Fi và BLE, giá thành thấp và cộng đồng hỗ trợ rộng. (iv) Tài nguyên tính toán
+và bộ nhớ trên vi điều khiển có hạn, đòi hỏi các thuật toán hiệu chuẩn và hợp
+nhất phải đủ nhẹ để chạy thời gian thực. (v) Băng thông và độ tin cậy của đường
+truyền không dây là hữu hạn, buộc phải thiết kế khuôn dạng gói tin gọn và cơ chế
+xử lý mất gói.
+
+\subsection{Đặc tả kỹ thuật mục tiêu}
+\label{subsec:yc_dacta}
+Tổng hợp ba nhóm yêu cầu trên, Bảng~\ref{tab:dacta} liệt kê các chỉ tiêu kỹ thuật
+mục tiêu được dùng làm cơ sở thiết kế và đánh giá. Các giá trị này là mục tiêu đặt
+ra ở giai đoạn thiết kế; mức độ đáp ứng thực tế sẽ được kiểm chứng bằng thực
+nghiệm ở Chương~\ref{chap:ketqua}.
+
+\begin{table}[h]
+    \centering
+    \caption{Đặc tả kỹ thuật mục tiêu của hệ thống.}
+    \label{tab:dacta}
+    \begin{tabular}{p{4.2cm} p{4.5cm} p{4.8cm}}
+        \hline
+        \textbf{Chỉ tiêu}         & \textbf{Giá trị mục tiêu}                                  & \textbf{Cơ sở}                                       \\
+        \hline
+        Số nút cảm biến           & 6 nút MPU6050 (6DOF)                                       & Phủ các đoạn chi trên (Mục~\ref{subsec:dh_canchinh}) \\
+        Tần số lấy mẫu mỗi nút    & $\ge 50$ Hz                                                & Định lý Nyquist cho vận động chi trên                \\
+        Dải đo cấu hình           & Gia tốc $\pm 2g$; vận tốc góc $\pm 250\,^{\circ}/\text{s}$ & Cấu hình mặc định của firmware                       \\
+        Độ trễ đầu cuối           & $\le 100$ ms                                               & Phản hồi thời gian thực                              \\
+        Lệch đồng bộ giữa các nút & $\le 5$ ms                                                 & Ghép cặp mẫu (Mục~\ref{sec:xulytinhieu})             \\
+        Sai số góc khớp (RMS)     & $\le 5^{\circ}$                                            & Ý nghĩa lâm sàng cho ROM                             \\
+        Thời lượng pin            & $\ge 3$ giờ                                                & Một buổi tập phục hồi                                \\
+        Khối lượng mỗi nút        & $\le 30$ g                                                 & Tính đeo được                                        \\
+        Kết nối không dây         & ESP-NOW (nút tới master), BLE (master tới máy tính)        & Tích hợp sẵn trên ESP32                              \\
+        Chi phí linh kiện         & Thấp, phổ biến                                             & Khả thi và dễ tái tạo                                \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Bảng~\ref{tab:dacta} cho thấy các chỉ tiêu được suy ra trực tiếp từ yêu cầu: ví
+dụ mức $50$ Hz bắt nguồn từ phổ tần của vận động chi trên, ngưỡng lệch đồng bộ $5$
+ms gắn với nhu cầu ghép cặp mẫu giữa các nút, còn sai số góc khớp mục tiêu phản
+ánh độ chính xác cần thiết để các chỉ số ROM có giá trị tham khảo lâm sàng. Riêng dải đo được đặt theo cấu hình mặc định của firmware ($\pm 2g$ và $\pm 250\,^{\circ}/\text{s}$); cần lưu ý dải vận tốc góc $\pm 250\,^{\circ}/\text{s}$ có thể bị bão hoà ở những cử động tay nhanh, nên nếu thực nghiệm cho thấy hiện tượng cắt đỉnh thì có thể nâng lên $\pm 500$ hoặc $\pm 1000\,^{\circ}/\text{s}$ bằng cách đổi thanh ghi cấu hình tương ứng. Tập
+đặc tả này vừa định hướng các quyết định thiết kế ở những mục tiếp theo, vừa đóng
+vai trò là bộ tiêu chí nghiệm thu khi đánh giá hệ thống. Trên cơ sở các yêu cầu
+và ràng buộc đã xác lập, mục tiếp theo trình bày kiến trúc tổng thể của hệ thống,
+thể hiện cách phân bổ các chức năng lên những thành phần phần cứng và phần mềm cụ
+thể.
+
+
+
+% =====================================================================
+% Mục 3.2 — đặt sau Mục 3.1 trong Chương 3
+% =====================================================================
+\section{Kiến trúc tổng thể hệ thống}
+\label{sec:kientruc}
+
+Từ tập yêu cầu và ràng buộc ở Mục~\ref{sec:yeucau}, hệ thống được tổ chức theo mô
+hình phân lớp nhằm tách bạch rõ ràng giữa khâu thu nhận tín hiệu, khâu truyền dẫn
+và khâu xử lý -- hiển thị. Cách phân lớp này giúp mỗi thành phần có thể được thiết
+kế, kiểm thử và thay thế độc lập, đồng thời phản ánh đúng luồng dữ liệu một chiều
+từ cảm biến đến kết quả lâm sàng. Hình~\ref{fig:kientruc} minh hoạ kiến trúc tổng
+thể gồm ba lớp và các đường dữ liệu giữa chúng.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{0.95\textwidth}{!}{%
+        \begin{tikzpicture}[
+                >={Latex[length=2mm]},
+                font=\small,
+                nd/.style={draw, rounded corners, align=center, font=\scriptsize, minimum height=9mm, minimum width=24mm, fill=white},
+                blk/.style={draw, rounded corners, align=center, minimum height=8mm, inner sep=5pt, fill=white},
+                grp/.style={draw, dashed, rounded corners, inner xsep=5mm, inner ysep=5mm}
+            ]
+            \node[nd] (n1) {Node 1\\ESP32-C3 + MPU6050};
+            \node[nd, right=4mm of n1] (n2) {Node 2\\ESP32-C3 + MPU6050};
+            \node[nd, right=4mm of n2] (ndd) {$\cdots$};
+            \node[nd, right=4mm of ndd] (n6) {Node 6\\ESP32-C3 + MPU6050};
+            \node[blk, below=16mm of n2] (master) {ESP32 master\\(thu nhận, đồng bộ, đóng gói)};
+            \draw[->] (n1) -- (master);
+            \draw[->] (n2) -- (master);
+            \draw[->] (ndd) -- (master);
+            \draw[->] (n6) -- node[pos=0.4, right, font=\scriptsize] {ESP-NOW} (master);
+            \node[blk, below=14mm of master] (filt) {Lọc số và nội suy};
+            \node[blk, below=5mm of filt] (madg) {Hợp nhất Madgwick};
+            \node[blk, below=5mm of madg] (kin) {Động học — góc khớp};
+            \node[blk, below=5mm of kin] (clin) {ROM / SPARC và hiển thị};
+            \draw[->] (master) -- node[right, font=\scriptsize] {BLE} (filt);
+            \draw[->] (filt) -- (madg);
+            \draw[->] (madg) -- (kin);
+            \draw[->] (kin) -- (clin);
+            \begin{scope}[on background layer]
+                \node[grp, fit=(n1)(n6), label={[font=\bfseries]left:Lớp thu nhận}] {};
+                \node[grp, fit=(master), label={[font=\bfseries]left:Lớp truyền dẫn}] {};
+                \node[grp, fit=(filt)(clin), label={[font=\bfseries]left:Lớp xử lý}] {};
+            \end{scope}
+        \end{tikzpicture}%
+    }
+    \caption{Kiến trúc tổng thể ba lớp của hệ thống: lớp thu nhận gồm sáu nút độc lập, mỗi nút là một vi điều khiển ESP32-C3 ghép với một cảm biến MPU6050 (tự lấy mẫu, gắn nhãn thời gian và hiệu chuẩn cục bộ); lớp truyền dẫn gồm một ESP32 master thu nhận dữ liệu không dây qua ESP-NOW từ sáu nút, đồng bộ và chuyển tiếp về máy tính; lớp xử lý — hiển thị thực hiện tại máy tính.}
+    \label{fig:kientruc}
+\end{figure}
+
+Để có hình dung trực quan về sản phẩm tương ứng với kiến trúc nói trên,
+Hình~\ref{fig:fullsystem} giới thiệu toàn cảnh phần cứng đã chế tạo, gồm sáu nút
+cảm biến và một khối thu nhận trung tâm (master).
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.8\textwidth]{figures/full_system.jpg}
+    \framebox[0.8\textwidth]{\rule{0pt}{5cm}\textit{Ảnh chụp toàn bộ hệ thống: 6 nút cảm biến và master (chèn ảnh tại đây)}}
+    \caption{Toàn cảnh phần cứng hệ thống đã chế tạo: sáu nút cảm biến (mỗi nút gồm ESP32-C3, MPU6050, pin và hộp in 3D) cùng khối thu nhận trung tâm dùng ESP32.}
+    \label{fig:fullsystem}
+\end{figure}
+
+\subsection{Mô hình phân lớp tổng thể}
+\label{subsec:kt_phanlop}
+Như thể hiện trên Hình~\ref{fig:kientruc}, hệ thống gồm ba lớp chức năng. (i) Lớp
+thu nhận tín hiệu gồm sáu nút độc lập, mỗi nút ghép một vi điều khiển ESP32-C3 với
+một cảm biến MPU6050, đảm nhiệm việc lấy mẫu, gắn nhãn thời gian và hiệu chuẩn dữ
+liệu quán tính thô ngay tại nút. (ii) Lớp truyền dẫn không dây gồm một vi điều
+khiển ESP32 đóng vai trò master, thu nhận dữ liệu từ sáu nút qua ESP-NOW rồi
+chuyển tiếp về máy tính. (iii) Lớp xử lý và
+hiển thị, đặt tại máy tính, thực hiện hợp nhất hướng, tính góc khớp, trích xuất chỉ
+số lâm sàng và trình diễn kết quả cho người dùng. Việc phân tách ba lớp tương ứng
+với ba nhóm yêu cầu ở Mục~\ref{sec:yeucau}: lớp thu nhận quyết định độ chính xác
+và tần số lấy mẫu, lớp truyền dẫn quyết định độ trễ và độ tin cậy dữ liệu, còn lớp
+xử lý quyết định chất lượng của các chỉ số đầu ra.
+
+\subsection{Lớp thu nhận tín hiệu}
+\label{subsec:kt_thunhan}
+Lớp thu nhận được tổ chức theo kiến trúc phân tán: thay vì dồn sáu cảm biến lên
+một bus I2C dùng chung, mỗi cảm biến MPU6050 được ghép riêng với một vi điều khiển
+ESP32-C3 để tạo thành một nút độc lập. Cách bố trí này giải quyết trực tiếp ràng
+buộc về địa chỉ I2C nêu ở Mục~\ref{subsec:yc_rangbuoc} -- vì mỗi MPU6050 là cảm
+biến duy nhất trên bus của nút nên không xảy ra xung đột địa chỉ -- đồng thời tránh
+phải đi dây bus dài dọc theo chi, vốn kém tin cậy và cản trở vận động. Mỗi nút tự
+lấy mẫu cảm biến của mình ở tần số tối thiểu $50$ Hz, gắn nhãn thời gian và áp các
+tham số hiệu chuẩn theo Mục~\ref{sec:hieuchuan} ngay tại nguồn trước khi truyền
+đi. Đổi lại, do sáu nút lấy mẫu bằng các đồng hồ độc lập, thách thức thiết kế
+chuyển từ bài toán đọc tuần tự sang bài toán đồng bộ thời gian giữa các nút; độ
+lệch thời gian giữa các nút được xử lý tại master và ở khâu đồng bộ -- nội suy đã
+trình bày ở Mục~\ref{sec:xulytinhieu}. Chi tiết về linh kiện, sơ đồ kết nối và bố
+trí cảm biến trên chi được trình bày ở Mục~\ref{sec:phancung}.
+
+\subsection{Lớp truyền dẫn không dây}
+\label{subsec:kt_truyen}
+Lớp truyền dẫn được tổ chức thành hai chặng. Ở chặng thứ nhất, sáu nút cảm biến
+gửi dữ liệu của mình tới một ESP32 master bằng ESP-NOW -- giao thức không dây nhẹ,
+độ trễ thấp và phù hợp cho nhiều nút cùng phát về một điểm thu. Master gom dữ liệu
+từ sáu nút, sắp xếp theo nhãn thời gian và đóng gói. Ở chặng thứ hai, master
+chuyển tiếp dữ liệu đã gom về máy tính qua BLE (Bluetooth Low Energy). Để tiết kiệm băng thông hữu hạn, dữ
+liệu được đóng thành khuôn dạng gói gọn kèm nhãn thời gian và chỉ số nút, đồng
+thời có cơ chế xử lý mất gói tương thích với khâu nội suy ở
+Mục~\ref{sec:xulytinhieu}. Thiết kế chi tiết của khuôn dạng gói tin, cơ chế đồng
+bộ và xử lý mất mát được trình bày ở Mục~\ref{sec:truyenkhongday}.
+
+\subsection{Lớp xử lý và hiển thị}
+\label{subsec:kt_xuly}
+Tại máy tính, dữ liệu nhận được lần lượt đi qua chuỗi xử lý đã thiết lập ở chương
+cơ sở lý thuyết: lọc khử nhiễu và nội suy lấp mẫu thiếu (Mục~\ref{sec:xulytinhieu}),
+hợp nhất thành quaternion hướng bằng thuật toán Madgwick (Mục~\ref{sec:madgwick}),
+rồi tính các góc khớp theo mô hình động học chi trên (Mục~\ref{sec:donghoc}). Từ
+chuỗi góc khớp theo thời gian, máy tính trích xuất các chỉ số tầm vận động và độ
+mượt chuyển động, hiển thị trực quan và lưu trữ phục vụ xem lại. Việc đặt các bước
+giàu tính toán và trực quan hoá ở máy tính giúp giảm tải cho vi điều khiển và tận
+dụng năng lực tính toán cũng như màn hình của máy tính; thiết kế phần mềm phía máy
+chủ được trình bày ở Mục~\ref{sec:luongxuly}.
+
+Giao diện phần mềm phía máy tính trình bày trực quan dữ liệu vận động theo thời
+gian thực; Hình~\ref{fig:dashboard} là ảnh chụp màn hình bảng điều khiển
+(dashboard) trong một phiên đo thử.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.9\textwidth]{figures/dashboard.png}
+    \framebox[0.9\textwidth]{\rule{0pt}{5cm}\textit{Ảnh chụp màn hình giao diện web thời gian thực (chèn ảnh tại đây)}}
+    \caption{Ảnh chụp giao diện phần mềm phía máy tính hiển thị góc khớp và dữ liệu quán tính theo thời gian thực trong một phiên đo.}
+    \label{fig:dashboard}
+\end{figure}
+
+\subsection{Phân bổ chức năng và luồng dữ liệu}
+\label{subsec:kt_luong}
+Tổng hợp lại, luồng dữ liệu xuyên suốt hệ thống đi theo một chiều: tại mỗi nút,
+cảm biến MPU6050 sinh dữ liệu quán tính thô; vi điều khiển ESP32-C3 của nút lấy
+mẫu, gắn nhãn thời gian, hiệu chuẩn và đóng gói; các nút truyền gói tin tới ESP32
+master qua ESP-NOW; master gom, đồng bộ và chuyển tiếp về máy tính; máy tính lọc,
+đồng bộ, hợp nhất, tính góc khớp và chỉ số lâm sàng rồi hiển thị.
+Hình~\ref{fig:luongdulieu} tóm tắt chuỗi biến đổi dữ liệu này, trong đó nhãn trên
+mỗi mũi tên cho biết dạng dữ liệu được chuyển giao giữa các khâu.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{\textwidth}{!}{%
+        \begin{tikzpicture}[
+                >={Latex[length=2mm]},
+                font=\scriptsize,
+                stg/.style={draw, rounded corners, align=center, minimum height=9mm, minimum width=18mm, fill=white}
+            ]
+            \node[stg] (sens) {6$\times$ MPU6050};
+            \node[stg, right=12mm of sens] (cal) {Hiệu chuẩn};
+            \node[stg, right=12mm of cal] (filt) {Lọc và nội suy};
+            \node[stg, right=12mm of filt] (madg) {Madgwick};
+            \node[stg, right=12mm of madg] (kin) {Động học};
+            \node[stg, right=12mm of kin] (rom) {ROM / SPARC};
+            \draw[->] (sens) -- node[above] {$\mathbf{a},\boldsymbol{\omega}$ thô} (cal);
+            \draw[->] (cal) -- node[above] {đã hiệu chuẩn} (filt);
+            \draw[->] (filt) -- node[above] {chuỗi đều} (madg);
+            \draw[->] (madg) -- node[above] {quaternion $\mathbf{q}$} (kin);
+            \draw[->] (kin) -- node[above] {góc khớp} (rom);
+        \end{tikzpicture}%
+    }
+    \caption{Luồng biến đổi dữ liệu một chiều qua các khâu xử lý; nhãn trên mỗi mũi tên cho biết dạng dữ liệu được chuyển giao.}
+    \label{fig:luongdulieu}
+\end{figure}
+
+Cách
+phân bổ chức năng này đặt các thao tác gắn liền với thời điểm thu mẫu (lấy mẫu,
+gắn nhãn thời gian, hiệu chuẩn) ở gần cảm biến để bảo toàn tính toàn vẹn thời
+gian, trong khi dồn các thao tác giàu tính toán về máy tính nhằm đáp ứng đồng thời
+yêu cầu về tần số lấy mẫu, độ trễ và độ chính xác trong Bảng~\ref{tab:dacta}. Kiến
+trúc tổng thể này là khung tham chiếu cho các mục tiếp theo, lần lượt đi sâu vào
+thiết kế phần cứng (Mục~\ref{sec:phancung}), đường truyền không dây (Mục~\ref{sec:truyenkhongday})
+và phần mềm phía máy tính (Mục~\ref{sec:luongxuly}).
+
+
+% =====================================================================
+% Mục 3.3 — đặt sau Mục 3.2 trong Chương 3
+% =====================================================================
+\section{Thiết kế phần cứng}
+\label{sec:phancung}
+
+Mục này cụ thể hoá lớp thu nhận và một phần lớp truyền dẫn trong kiến trúc tổng
+thể ở Hình~\ref{fig:kientruc} thành thiết kế phần cứng chi tiết. Nội dung lần lượt
+trình bày việc lựa chọn linh kiện, thiết kế một nút cảm biến, khối thu nhận trung
+tâm, chuỗi cấp nguồn và phương án cố định thiết bị lên chi. Mọi lựa chọn đều bám
+sát các chỉ tiêu trong Bảng~\ref{tab:dacta} và các ràng buộc ở
+Mục~\ref{subsec:yc_rangbuoc}.
+
+\subsection{Lựa chọn linh kiện}
+\label{subsec:hw_linhkien}
+Bảng~\ref{tab:linhkien} liệt kê các linh kiện chính của hệ thống cùng vai trò của
+chúng. Cảm biến MPU6050 được chọn vì tích hợp sẵn gia tốc kế và con quay ba trục
+trong một vi mạch nhỏ gọn, giá thành thấp và giao tiếp I2C đơn giản
+(Mục~\ref{sec:imu_mpu6050}). Vi điều khiển ESP32-C3 đảm nhiệm vai trò bộ xử lý của
+nút nhờ tích hợp sẵn radio không dây, đủ năng lực chạy hiệu chuẩn thời gian thực
+và tiêu thụ điện thấp; một ESP32 đầy đủ tính năng hơn được dùng làm master để thu
+nhận đồng thời nhiều luồng ESP-NOW và phát BLE.
+
+\begin{table}[h]
+    \centering
+    \caption{Các linh kiện phần cứng chính của hệ thống.}
+    \label{tab:linhkien}
+    \begin{tabular}{p{3.5cm} p{4.0cm} p{5.6cm}}
+        \hline
+        \textbf{Thành phần}  & \textbf{Linh kiện}      & \textbf{Vai trò}                                       \\
+        \hline
+        Cảm biến quán tính   & MPU6050 (6DOF)          & Đo gia tốc và vận tốc góc ba trục                      \\
+        Vi điều khiển nút    & ESP32-C3                & Lấy mẫu, hiệu chuẩn, gắn nhãn thời gian, phát ESP-NOW  \\
+        Vi điều khiển master & ESP32                   & Thu ESP-NOW từ sáu nút, đồng bộ, phát BLE về máy tính  \\
+        Hạ áp tầng 1         & TPS54320                & Buck $7{,}4$~V $\to 5$~V cấp cho module ESP32/ESP32-C3 \\
+        Hạ áp tầng 2         & AMS1117-ADJ             & LDO $5$~V $\to 3{,}3$~V cấp riêng cho MPU6050          \\
+        Nguồn                & Pin LiPo 2S ($7{,}4$~V) & Cấp nguồn độc lập cho mỗi nút và master                \\
+        Cơ khí               & Hộp in 3D + đai         & Cố định nút lên đoạn chi                               \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Như Bảng~\ref{tab:linhkien} cho thấy, toàn bộ linh kiện đều phổ biến và giá thành
+thấp, phù hợp với ràng buộc về chi phí và khả năng tái tạo đã nêu ở
+Mục~\ref{subsec:yc_phichucnang}.
+
+\subsection{Thiết kế nút cảm biến}
+\label{subsec:hw_node}
+Mỗi nút cảm biến là một khối độc lập gồm cảm biến, vi điều khiển và mạch nguồn
+riêng. Hình~\ref{fig:nodewiring} trình bày sơ đồ khối kết nối bên trong một nút. Cảm
+biến MPU6050 nối với ESP32-C3 qua bus I2C (hai đường tín hiệu SDA và SCL). Về nguồn,
+module ESP32-C3 được cấp $5$~V qua chân VIN (tận dụng bộ ổn áp $3{,}3$~V sẵn trên
+module), còn MPU6050 được cấp $3{,}3$~V riêng từ LDO AMS1117-ADJ; chuỗi hạ áp được
+mô tả chi tiết ở Mục~\ref{subsec:hw_nguon}. Vì mỗi nút chỉ có duy nhất một cảm
+biến trên bus I2C nên không phát sinh xung đột địa chỉ và không cần bộ ghép kênh.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{0.95\textwidth}{!}{%
+        \begin{tikzpicture}[
+                >={Latex[length=2mm]},
+                font=\small,
+                comp/.style={draw, rounded corners, align=center, minimum height=11mm, minimum width=24mm, fill=white}
+            ]
+            \node[comp] (bat) {Pin LiPo 2S\\$7{,}4$~V};
+            \node[comp, right=10mm of bat] (buck) {TPS54320\\(buck $\to 5$~V)};
+            \node[comp, right=14mm of buck] (mcu) {ESP32-C3};
+            \node[comp, below=12mm of buck] (ldo) {AMS1117-ADJ\\(LDO $\to 3{,}3$~V)};
+            \node[comp, right=14mm of ldo] (imu) {MPU6050};
+            \draw[->] (bat) -- node[above, font=\scriptsize] {$7{,}4$~V} (buck);
+            \draw[->] (buck) -- node[above, font=\scriptsize] {$5$~V} (mcu);
+            \draw[->] (buck) -- node[right, font=\scriptsize] {$5$~V} (ldo);
+            \draw[->] (ldo) -- node[above, font=\scriptsize] {$3{,}3$~V} (imu);
+            \draw[<->] (mcu) -- node[right, font=\scriptsize] {I2C (SDA, SCL)} (imu);
+        \end{tikzpicture}%
+    }
+    \caption{Sơ đồ khối một nút cảm biến: pin LiPo 2S qua bộ buck TPS54320 xuống $5$~V; nhánh $5$~V cấp trực tiếp cho module ESP32-C3 (và ESP32 master), đồng thời qua LDO AMS1117-ADJ hạ tiếp xuống $3{,}3$~V để cấp riêng cho MPU6050; ESP32-C3 đọc cảm biến qua bus I2C.}
+    \label{fig:nodewiring}
+\end{figure}
+
+Toàn bộ linh kiện của một nút được lắp gọn trong một hộp in 3D như minh hoạ ở
+Hình~\ref{fig:node_photo}.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.5\textwidth]{figures/node_assembled.jpg}
+    \framebox[0.5\textwidth]{\rule{0pt}{4cm}\textit{Ảnh một nút lắp hoàn chỉnh (chèn ảnh tại đây)}}
+    \caption{Một nút cảm biến hoàn chỉnh gồm ESP32-C3, MPU6050 và mạch nguồn đặt trong hộp in 3D.}
+    \label{fig:node_photo}
+\end{figure}
+
+\subsection{Khối thu nhận trung tâm}
+\label{subsec:hw_master}
+Khối thu nhận trung tâm là một vi điều khiển ESP32 đóng vai trò master. Nó duy trì
+kết nối ESP-NOW với cả sáu nút để thu nhận các gói dữ liệu quán tính đã hiệu chuẩn,
+sắp xếp lại theo nhãn thời gian và gom thành luồng thống nhất, sau đó phát về máy
+chủ qua BLE. Hình~\ref{fig:masterblock} minh hoạ sơ đồ khối của master với ba giao diện
+chính: thu ESP-NOW từ sáu node, khối đồng bộ -- gom -- đóng gói, và phát BLE về
+máy tính. Khác với node, master không cần cấp nguồn $3{,}3$~V riêng nên chỉ dùng
+tầng buck TPS54320 để lấy $5$~V từ một pin LiPo riêng, cấp qua chân VIN, bảo đảm
+hệ thống hoàn toàn không dây trong suốt buổi đo. Thiết kế giao
+thức và khuôn dạng gói tin của đường ESP-NOW và BLE được trình bày chi tiết ở
+Mục~\ref{sec:truyenkhongday}.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{0.9\textwidth}{!}{%
+        \begin{tikzpicture}[
+                >={Latex[length=2mm]},
+                font=\small,
+                blk/.style={draw, rounded corners, align=center, minimum height=10mm, minimum width=30mm, fill=white},
+                io/.style={draw, rounded corners, align=center, font=\scriptsize, minimum height=9mm, minimum width=18mm, fill=white}
+            ]
+            \node[io] (nodes) {6 node\\cảm biến};
+            \node[blk, right=16mm of nodes] (mcu) {ESP32 master\\(thu ESP-NOW, đồng bộ,\\gom và đóng gói)};
+            \node[io, right=16mm of mcu] (srv) {máy tính};
+            \draw[->] (nodes) -- node[above, font=\scriptsize] {ESP-NOW} (mcu);
+            \draw[->] (mcu) -- node[above, font=\scriptsize] {BLE} (srv);
+            \node[blk, below=12mm of mcu] (pwr) {Pin LiPo 2S $7{,}4$~V $\to$\\TPS54320 $\to 5$~V};
+            \draw[->] (pwr) -- node[right, font=\scriptsize] {$5$~V (VIN)} (mcu);
+        \end{tikzpicture}%
+    }
+    \caption{Sơ đồ khối khối thu nhận trung tâm: ESP32 master nhận dữ liệu từ sáu node qua ESP-NOW, đồng bộ và gom thành luồng thống nhất rồi phát về máy tính qua BLE; nguồn lấy từ pin LiPo 2S qua bộ hạ áp TPS54320 xuống $5$~V cấp qua chân VIN.}
+    \label{fig:masterblock}
+\end{figure}
+
+Hình~\ref{fig:masterphoto} cho thấy bo mạch master thực tế sau khi lắp ráp hoàn
+chỉnh.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.5\textwidth]{figures/master_board.jpg}
+    \framebox[0.5\textwidth]{\rule{0pt}{4cm}\textit{Ảnh cận cảnh bo mạch master (chèn ảnh tại đây)}}
+    \caption{Ảnh chụp cận cảnh khối thu nhận trung tâm dùng ESP32 sau khi lắp ráp hoàn chỉnh.}
+    \label{fig:masterphoto}
+\end{figure}
+
+\subsection{Thiết kế nguồn điện}
+\label{subsec:hw_nguon}
+Mỗi nút cảm biến được cấp nguồn từ một pin LiPo hai cell (điện áp danh định $7{,}4$~V); module ESP32-C3 nhận nguồn $5$~V còn MPU6050 hoạt động ở mức $3{,}3$~V. Do chênh lệch điện áp lớn, mỗi nút dùng chuỗi hạ áp hai tầng để cân bằng giữa hiệu suất và độ sạch của nguồn (Hình~\ref{fig:powertree}); riêng khối master, do không mang MPU6050 nên chỉ cần một tầng buck hạ $7{,}4$~V xuống $5$~V cấp cho ESP32. Tầng thứ nhất dùng bộ biến đổi giảm áp (buck) TPS54320 hạ
+$7{,}4$~V xuống $5$~V; do là mạch chuyển mạch, tầng này có hiệu suất cao và toả
+nhiệt thấp ngay cả khi chênh áp lớn, giúp kéo dài thời lượng pin. Nhánh $5$~V này
+được đưa trực tiếp tới module ESP32-C3 ở nút (và ESP32 ở master), vì các module
+này đã tích hợp sẵn bộ ổn áp $3{,}3$~V trên board cho phép cấp nguồn qua chân VIN.
+Tầng thứ hai dùng bộ ổn áp tuyến tính (LDO) AMS1117-ADJ hạ tiếp $5$~V xuống
+$3{,}3$~V để cấp riêng cho MPU6050; vì chênh áp ở tầng này nhỏ nên tổn hao của LDO
+không đáng kể, đổi lại cho mức nhiễu gợn thấp, phù hợp để nuôi cảm biến nhạy
+như MPU6050. Cách bố trí buck đứng trước, LDO
+đứng sau là một thoả hiệp quen thuộc: buck đảm nhận phần hạ áp lớn để tiết kiệm
+năng lượng, còn LDO làm sạch nguồn cuối cấp cho tải nhạy nhiễu. Việc mỗi nút mang
+nguồn riêng cũng giúp đạt mục tiêu thời lượng tối thiểu trong Bảng~\ref{tab:dacta}
+mà không cần dây cấp nguồn chạy dọc cơ thể.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{0.85\textwidth}{!}{%
+        \begin{tikzpicture}[
+                >={Latex[length=2mm]},
+                font=\small,
+                src/.style={draw, rounded corners, align=center, minimum height=9mm, minimum width=26mm, fill=white},
+                conv/.style={draw, align=center, minimum height=9mm, minimum width=28mm, fill=white},
+                load/.style={draw, rounded corners, align=center, font=\scriptsize, minimum height=8mm, minimum width=30mm, fill=white}
+            ]
+            \node[src] (bat) {Pin LiPo 2S\\$7{,}4$~V};
+            \node[conv, right=14mm of bat] (buck) {TPS54320\\(buck)};
+            \node[load, above right=5mm and 16mm of buck] (mods) {Module ESP32-C3 / ESP32\\(qua chân VIN)};
+            \node[conv, below right=5mm and 16mm of buck] (ldo) {AMS1117-ADJ\\(LDO)};
+            \node[load, right=14mm of ldo] (imu) {MPU6050};
+            \draw[->] (bat) -- node[above,font=\scriptsize]{$7{,}4$~V} (buck);
+            \draw[->] (buck) -- node[above,font=\scriptsize,sloped]{$5$~V} (mods);
+            \draw[->] (buck) -- node[below,font=\scriptsize,sloped]{$5$~V} (ldo);
+            \draw[->] (ldo) -- node[above,font=\scriptsize]{$3{,}3$~V} (imu);
+        \end{tikzpicture}%
+    }
+    \caption{Sơ đồ cây nguồn của hệ thống: pin LiPo 2S cấp cho tầng buck TPS54320 tạo nhánh $5$~V nuôi các module ESP32-C3/ESP32 qua chân VIN; một phần nhánh $5$~V tiếp tục qua LDO AMS1117-ADJ xuống $3{,}3$~V cấp riêng cho MPU6050.}
+    \label{fig:powertree}
+\end{figure}
+
+\subsection{Bố trí và cố định trên chi}
+\label{subsec:hw_deo}
+Mỗi nút được đặt trong một hộp in 3D có kích thước vừa khít với cụm mạch và pin,
+rồi cố định lên đoạn chi bằng đai đàn hồi (Hình~\ref{fig:armmount}). Phương án này giữ cho nút bám chắc vào
+đoạn xương cần đo, hạn chế xê dịch tương đối giữa cảm biến và đoạn chi trong khi
+vận động -- yếu tố ảnh hưởng trực tiếp tới sai số ước lượng hướng. Vị trí gắn các
+nút trên thân mình, cánh tay, cẳng tay và bàn tay tuân theo cách bố trí giải phẫu
+đã trình bày ở Mục~\ref{subsec:dh_canchinh} và minh hoạ ở
+Hình~\ref{fig:sensorplacement}. Sau khi gắn, hệ thống cần một bước căn chỉnh tư
+thế tham chiếu để xác định phép bù lệch giữa hệ trục cảm biến và hệ trục giải phẫu
+theo Mục~\ref{subsec:dh_canchinh}, bảo đảm các góc khớp tính được phản ánh đúng
+chuyển động của người tập.
+
+\begin{figure}[h]
+    \centering
+    \framebox[0.6\textwidth]{\rule{0pt}{6cm}\textit{Ảnh chụp thực tế: các hộp in 3D chứa nút cảm biến được cố định bằng đai lên thân mình, cánh tay, cẳng tay và bàn tay}}
+    \caption{Ảnh minh hoạ cách gắn các hộp chứa nút cảm biến lên chi trên của người tập (sẽ bổ sung ảnh chụp thực tế).}
+    \label{fig:armmount}
+\end{figure}
+
+Ngoài cách cố định trên chi, bản thiết kế cơ khí của hộp in 3D dùng để chứa và
+bảo vệ cụm mạch của mỗi nút được minh hoạ ở Hình~\ref{fig:casecad}.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.5\textwidth]{figures/case_cad.png}
+    \framebox[0.5\textwidth]{\rule{0pt}{4cm}\textit{Bản vẽ CAD / ảnh hộp in 3D (chèn ảnh tại đây)}}
+    \caption{Mô hình CAD và sản phẩm in 3D của hộp chứa nút cảm biến.}
+    \label{fig:casecad}
+\end{figure}
+
+
+
+% =====================================================================
+% Mục 3.4 — Đường truyền không dây — đặt sau Mục 3.3 trong Chương 3
+% =====================================================================
+\section{Thiết kế đường truyền không dây}
+\label{sec:truyenkhongday}
+
+Đường truyền không dây là một trong những thành phần quyết định chất lượng của
+hệ thống: nó chi phối trực tiếp ba chỉ tiêu mấu chốt trong Bảng~\ref{tab:dacta}
+là tần số lấy mẫu hiệu dụng, độ trễ đầu cuối và độ lệch đồng bộ giữa các nút. Như
+đã giới thiệu ở kiến trúc tổng thể (Mục~\ref{sec:kientruc}), đường truyền gồm hai
+chặng nối tiếp nhưng có yêu cầu rất khác nhau. Chặng thứ nhất thu thập dữ liệu từ
+sáu nút phân tán về một master -- một bài toán nhiều-tới-một, đòi hỏi độ trễ
+thấp, chi phí thiết lập tối thiểu và không phụ thuộc hạ tầng mạng. Chặng thứ hai
+truyền luồng dữ liệu đã hợp nhất từ master về máy tính -- một bài toán một-tới-một,
+đòi hỏi khả năng tương thích với máy tính hoặc điện thoại phổ thông. Hai yêu cầu
+trái ngược này dẫn tới hai lựa chọn công nghệ khác nhau cho hai chặng. Mục này
+lần lượt phân tích cơ sở lựa chọn công nghệ, đặc tả chi tiết khuôn dạng gói tin
+của từng chặng, cơ chế đồng bộ thời gian, phương thức phân chia khe thời gian để
+tránh va chạm, và cuối cùng tổng hợp bài toán băng thông, độ trễ và độ tin cậy
+của toàn tuyến truyền.
+
+\subsection{Lựa chọn công nghệ truyền không dây}
+\label{subsec:tx_choncongnghe}
+Dòng vi điều khiển ESP32/ESP32-C3 tích hợp sẵn ba phương thức truyền không dây có
+thể cân nhắc: Wi-Fi (thường dùng qua giao thức TCP/UDP), BLE và ESP-NOW.
+Bảng~\ref{tab:wireless} so sánh ba phương thức này theo các tiêu chí quan trọng
+đối với hệ thống. Wi-Fi cho thông lượng cao nhưng hướng kết nối, cần một điểm
+truy cập (access point) cùng thủ tục bắt tay và cấp phát địa chỉ, làm tăng độ trễ
+thiết lập và phần tiêu đề mỗi gói. BLE tiêu thụ điện thấp và phổ biến trên thiết
+bị đầu cuối, song cũng hướng kết nối và hạn chế số thiết bị ngoại vi mà một thiết
+bị trung tâm phục vụ đồng thời. ESP-NOW là giao thức phi kết nối do Espressif phát triển trên nền khung hành động (action frame) của Wi-Fi: nó không cần bắt tay, có phần tiêu đề gọn và độ trễ mỗi gói thấp, hỗ trợ cả truyền điểm--điểm (unicast) lẫn quảng bá (broadcast), đồng thời cho phép nhiều nút cùng phát về một điểm thu mà không bị giới hạn bởi số kết nối.
+
+\begin{table}[h]
+    \centering
+    \caption{So sánh các công nghệ không dây tích hợp sẵn trên ESP32 cho hai chặng truyền.}
+    \label{tab:wireless}
+    \begin{tabular}{p{3.2cm} p{3.4cm} p{3.4cm} p{3.4cm}}
+        \hline
+        \textbf{Tiêu chí}                    & \textbf{Wi-Fi (TCP/UDP)}         & \textbf{BLE (GATT)}         & \textbf{ESP-NOW}                \\
+        \hline
+        Mô hình kết nối                      & Hướng kết nối, cần điểm truy cập & Hướng kết nối               & Phi kết nối (unicast/broadcast) \\
+        Độ trễ thiết lập                     & Cao (bắt tay, cấp IP)            & Trung bình (quét, ghép đôi) & Không đáng kể                   \\
+        Phần tiêu đề mỗi gói                 & Cao                              & Trung bình                  & Thấp                            \\
+        Nhiều nút tới một điểm               & Cần AP/router                    & Hạn chế số thiết bị         & Tốt (quảng bá)                  \\
+        Khả dụng trên máy tính PC/điện thoại & Có                               & Có, phổ biến                & Không                           \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Từ so sánh trên, hệ thống chọn ESP-NOW cho chặng nút--master vì nó phù hợp tự
+nhiên với mô hình nhiều-tới-một và yêu cầu độ trễ thấp: sáu nút có thể phát ngay
+khi khởi động mà không cần điểm truy cập hay thủ tục kết nối, và phần tiêu đề gọn
+giúp tiết kiệm thời gian chiếm dụng kênh. Ngược lại, chặng master--máy tính chọn
+BLE vì máy tính là máy tính hoặc điện thoại phổ thông vốn không hỗ trợ ESP-NOW;
+BLE được hỗ trợ rộng rãi, tiêu thụ điện thấp, và với hồ sơ Nordic UART Service
+cho phép truyền luồng byte liên tục một cách đơn giản. Như vậy mỗi chặng dùng
+đúng công nghệ tối ưu cho đặc thù của nó.
+
+\subsection{Giao thức ESP-NOW giữa nút và master}
+\label{subsec:tx_espnow}
+Chặng nút--master dùng ESP-NOW, một giao thức truyền gói nhẹ trên lớp vật lý Wi-Fi $2{,}4$~GHz do Espressif cung cấp, không cần thủ tục bắt tay hay duy trì kết nối như Wi-Fi thông thường nên độ trễ mỗi gói thấp và mã nguồn trên nút đơn giản. Mỗi nút gửi bản tin đo của mình theo kiểu điểm--điểm (unicast) tới đúng địa chỉ MAC của master; nhờ đó tận dụng được cơ chế báo nhận (ACK) và truyền lại tự động ở tầng MAC của ESP-NOW, tăng độ tin cậy cho dữ liệu đo. Ở chiều ngược lại, chỉ có bản tin đồng bộ thời gian do master phát mới dùng chế độ quảng bá (broadcast) tới tất cả các nút (Mục~\ref{subsec:tx_sync}). Mỗi mẫu được đóng thành một bản
+tin \texttt{NodePacket} có cấu trúc cố định mô tả ở Bảng~\ref{tab:nodepacket}, với
+tổng kích thước $18$~byte. Bản tin gồm chỉ số nút để master phân biệt nguồn, nhãn
+thời gian đã đồng bộ phục vụ ghép cặp mẫu, sáu số đo quán tính dạng số nguyên
+$16$~bit ở đơn vị LSB của cảm biến, và một số thứ tự (\texttt{seq}) để master phát
+hiện gói bị mất. Việc truyền số nguyên thô thay vì số thực giúp giữ bản tin nhỏ
+gọn, phù hợp với ràng buộc băng thông ở Mục~\ref{subsec:yc_rangbuoc}; việc quy đổi
+sang đơn vị vật lý được thực hiện ở máy tính.
+
+\begin{table}[h]
+    \centering
+    \caption{Cấu trúc bản tin \texttt{NodePacket} truyền qua ESP-NOW (tổng $18$~byte).}
+    \label{tab:nodepacket}
+    \begin{tabular}{llcl}
+        \hline
+        \textbf{Trường}     & \textbf{Kiểu}         & \textbf{Số byte} & \textbf{Ý nghĩa}                  \\
+        \hline
+        \texttt{node\_id}   & \texttt{u8}           & 1                & Chỉ số nút (1--6)                 \\
+        \texttt{timestamp}  & \texttt{u32}          & 4                & Nhãn thời gian đã đồng bộ (ms)    \\
+        \texttt{ax, ay, az} & \texttt{i16}$\times$3 & 6                & Gia tốc ba trục (LSB)             \\
+        \texttt{gx, gy, gz} & \texttt{i16}$\times$3 & 6                & Vận tốc góc ba trục (LSB)         \\
+        \texttt{seq}        & \texttt{u8}           & 1                & Số thứ tự gói (phát hiện mất gói) \\
+        \hline
+        \textbf{Tổng}       &                       & \textbf{18}      &                                   \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Ở mức triển khai, ESP-NOW mang dữ liệu trong khung hành động (action frame) đặc
+thù nhà sản xuất của lớp Wi-Fi, với giới hạn tải tối đa $250$~byte mỗi gói; bản
+tin \texttt{NodePacket} dài $18$~byte do đó nằm gọn trong một gói đơn và không
+cần phân mảnh. Với chỉ sáu nút, master chỉ cần đăng ký sáu đối tác (peer) -- thấp hơn nhiều so với giới hạn số peer mà ESP-NOW hỗ trợ -- nên có thể thu nhận đồng thời từ cả sáu nút mà không vướng ràng buộc về số kết nối. Về băng thông, mỗi nút phát $18$~byte ở tần số
+$50$~Hz, tương ứng $900$~byte/s ($\approx 7{,}2$~kbit/s) ở mức ứng dụng; tổng lưu
+lượng của sáu nút vào khoảng $5{,}4$~kB/s ($\approx 43$~kbit/s), rất nhỏ so với
+thông lượng khả dụng của ESP-NOW (cỡ hàng trăm kbit/s trở lên tuỳ tốc độ lớp vật
+lý). Biên độ dự trữ băng thông lớn này cho phép giữ tốc độ PHY ở mức cơ sở nhằm
+tăng cự ly và độ tin cậy mà vẫn dư băng thông cho các bản tin điều khiển như đồng
+bộ thời gian.
+
+\subsection{Đồng bộ thời gian}
+\label{subsec:tx_sync}
+Để các nhãn thời gian do sáu nút gắn vào mẫu quy về một mốc chung, master định kỳ
+phát một bản tin \texttt{SyncPacket} mỗi $1$~giây với cấu trúc gọn gồm một byte
+phân loại (\texttt{type}\,=\,\texttt{0x01}) và một trường \texttt{master\_time}
+kiểu $32$~bit chứa thời gian tham chiếu của master tính bằng mili-giây. Khi nhận
+được bản tin này, mỗi nút ước lượng độ lệch đồng hồ theo công thức
+\begin{equation}
+    \label{eq:timeoffset}
+    \mathit{timeOffset} = \mathit{master\_time} - \mathtt{millis}().
+\end{equation}
+Nút cộng \(\mathit{timeOffset}\) vào đồng hồ cục bộ khi gắn nhãn cho mẫu, nhờ đó
+nhãn thời gian của mọi nút được quy về đồng hồ của master. Nếu một nút không nhận
+được bản tin \texttt{SyncPacket} nào trong $5$~giây, nó coi như mất đồng bộ và tạm
+thời quay về dùng đồng hồ cục bộ \(\mathtt{millis}()\) cho tới khi nhận được bản
+tin tham chiếu kế tiếp. Cơ chế bù đồng hồ ở phía nút dựa trên bản tin này được hiện thực ở phần lập
+trình firmware (Chương~\ref{chap:trienkhai}); mục này tập trung vào khuôn dạng và
+chu kỳ của bản tin đồng bộ.
+
+Chu kỳ phát bản tin đồng bộ $1$~giây là một thoả hiệp giữa độ chính xác và chi
+phí băng thông. Độ lệch giữa hai đồng hồ tinh thể độc lập tích luỹ theo sai số
+tần số tương đối của chúng: với thạch anh phổ thông có sai số cỡ vài chục phần
+triệu (ppm), độ trôi trong một giây chỉ vào khoảng vài chục micro-giây -- nhỏ hơn
+nhiều bậc so với ngưỡng lệch đồng bộ mục tiêu $5$~ms trong Bảng~\ref{tab:dacta}.
+Nói cách khác, chỉ cần tái đồng bộ mỗi giây là đủ để giữ sai khác thời gian giữa
+các nút ở mức dưới một mili-giây giữa hai lần đồng bộ, trong khi chi phí cho bản
+tin \texttt{SyncPacket} ($5$~byte mỗi giây) là không đáng kể. Sai số tức thời của
+phép bù chủ yếu đến từ độ bất định về thời điểm thu phát bản tin quảng bá; do độ
+trễ truyền ESP-NOW ở cự ly ngắn rất ổn định nên sai số này được giữ nhỏ. Cơ chế
+quay về đồng hồ cục bộ sau $5$~giây mất bản tin bảo đảm hệ thống suy giảm mềm
+(graceful degradation): thay vì gắn nhãn thời gian sai lệch lớn, nút tạm chấp
+nhận một độ lệch nhỏ tích luỹ cho tới khi khôi phục đồng bộ, và khâu nội suy phía
+máy tính (Mục~\ref{sec:xulytinhieu}) tiếp tục hấp thụ phần sai khác còn lại.
+
+\subsection{Phân chia khe thời gian TDMA}
+\label{subsec:tx_tdma}
+Vì sáu nút cùng phát trên một kênh vô tuyến dùng chung, nếu để chúng gửi tự do thì các gói ESP-NOW dễ va chạm và mất mát khi phát đồng thời (kể cả khi mỗi nút truyền unicast, vì chúng vẫn chia sẻ cùng một kênh tần số). Hệ thống do đó áp dụng cơ chế đa
+truy nhập phân chia theo thời gian (TDMA) dựa trên đồng hồ đã đồng bộ ở
+Mục~\ref{subsec:tx_sync}. Mỗi chu kỳ lấy mẫu dài $20$~ms (tương ứng $50$~Hz) được
+chia thành sáu khe, mỗi khe $3$~ms dành riêng cho một nút, như minh hoạ ở
+Hình~\ref{fig:tdma}. Căn cứ vào chỉ số nút và đồng hồ chung, mỗi nút chỉ phát
+\texttt{NodePacket} trong khe được cấp; khoảng $18$--$20$~ms còn lại được giữ làm
+khe dự trữ (slack) để hấp thụ sai lệch định thời và tránh va chạm ở biên giữa các
+khe. Cách phân bổ này khử gần như hoàn toàn xung đột khi sáu nút truyền trong cùng
+một chu kỳ, đồng thời vẫn để dư thời gian cho master xử lý và chuyển tiếp.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{\textwidth}{!}{%
+        \begin{tikzpicture}[font=\small]
+            \foreach \x/\lbl/\t in {0/Nút 1/0, 1.5/Nút 2/3, 3/Nút 3/6, 4.5/Nút 4/9, 6/Nút 5/12, 7.5/Nút 6/15} {
+                    \draw (\x,0) rectangle (\x+1.5,1);
+                    \node at (\x+0.75,0.5) {\lbl};
+                    \node[below] at (\x,-0.1) {$\t$};
+                }
+            \draw[fill=gray!20] (9,0) rectangle (10,1);
+            \node at (9.5,0.5) {slack};
+            \node[below] at (9,-0.1) {$18$};
+            \node[below] at (10,-0.1) {$20$};
+            \node[below] at (5,-1) {Thời gian (ms) trong một chu kỳ $20$~ms ($50$~Hz)};
+        \end{tikzpicture}%
+    }
+    \caption{Phân chia khe thời gian TDMA trong một chu kỳ $20$~ms: sáu nút lần lượt chiếm các khe $3$~ms (từ $0$ đến $18$~ms), khoảng $18$--$20$~ms để dự trữ tránh va chạm.}
+    \label{fig:tdma}
+\end{figure}
+
+Để kiểm chứng trực quan hoạt động của cơ chế phân khe, Hình~\ref{fig:tdma_capture} là ảnh chụp dạng sóng thu được bằng máy phân tích logic (logic analyzer), cho thấy sáu nút lần lượt phát trong các khe thời gian riêng biệt mà không chồng lấn.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.8\textwidth]{figures/tdma_capture.png}
+    \framebox[0.8\textwidth]{\rule{0pt}{4.5cm}\textit{Ảnh chụp dạng sóng (logic analyzer / oscilloscope) ghi lại thời điểm phát của sáu nút trong một chu kỳ TDMA (chèn ảnh tại đây)}}
+    \caption{Dạng sóng thực đo bằng máy phân tích logic minh hoạ sáu nút phát lần lượt trong các khe TDMA $3$~ms của một chu kỳ $20$~ms, xác nhận các gói không chồng lấn về thời gian.}
+    \label{fig:tdma_capture}
+\end{figure}
+
+Tính khả thi của cách chia khe có thể kiểm chứng bằng một ước lượng thời gian
+chiếm dụng kênh. Một gói ESP-NOW mang $18$~byte tải, cộng phần tiêu đề khung
+Wi-Fi và phần tử ESP-NOW, có tổng độ dài cỡ vài chục byte; ngay ở tốc độ lớp vật
+lý cơ sở, thời gian truyền trên không khí (air time) của một gói như vậy chỉ vào
+khoảng vài trăm micro-giây, tức nhỏ hơn nhiều so với độ rộng khe $3$~ms. Phần
+dôi ra trong mỗi khe (khoảng $2$~ms) đóng vai trò khoảng bảo vệ (guard time), hấp
+thụ độ bất định định thời còn lại sau đồng bộ cũng như khoảng cách liên khung
+(inter-frame space) của lớp Wi-Fi, nhờ đó hai nút liền kề về thời gian không lấn
+khe của nhau. Nếu không áp dụng TDMA mà để sáu nút phát tự do, xác suất hai hay
+nhiều gói chồng lấn trong cùng một cửa sổ thời gian sẽ tăng nhanh theo số nút và
+gây mất gói hàng loạt; cơ chế TDMA dựa trên đồng hồ chung khử gần như hoàn toàn
+nguy cơ này. Khoảng $18$--$20$~ms cuối chu kỳ được giữ làm khe dự trữ (slack)
+chung, vừa bù sai lệch định thời tổng thể vừa chừa thời gian cho master gom và
+chuyển tiếp khung trước khi chu kỳ kế tiếp bắt đầu.
+
+\subsection{Giao thức BLE giữa master và máy tính}
+\label{subsec:tx_ble}
+Chặng master--máy tính dùng Bluetooth năng lượng thấp (BLE) với hồ sơ Nordic UART
+Service (NUS), trong đó hai đặc tính TX và RX mô phỏng một cổng nối tiếp ảo, thuận
+tiện cho việc truyền luồng byte nhị phân liên tục. Sau mỗi chu kỳ, master gom dữ
+liệu của sáu nút thành một khung BLE cố định dài $80$~byte có cấu trúc ở
+Bảng~\ref{tab:bleframe}. Khung mở đầu bằng byte tiêu đề \texttt{0xAA}, tiếp theo là
+một mặt nạ bit cho biết những nút đang hoạt động, nhãn thời gian $32$~bit của
+khung, rồi $72$~byte dữ liệu của sáu nút (mỗi nút $12$~byte gồm ba thành phần gia
+tốc và ba thành phần vận tốc góc dạng $16$~bit), một byte tổng kiểm tra XOR và byte
+kết thúc \texttt{0x55}. Mặt nạ bit cho phép máy tính nhận biết ngay nút nào thiếu dữ
+liệu trong khung để kích hoạt nội suy (Mục~\ref{sec:xulytinhieu}), còn tổng kiểm
+tra giúp phát hiện khung lỗi. So với việc truyền dưới dạng văn bản JSON tốn khoảng
+$400$~byte cho cùng lượng thông tin, khung nhị phân $80$~byte tiết kiệm khoảng năm
+lần băng thông, qua đó giảm độ trễ và mức tiêu thụ năng lượng của chặng BLE.
+
+\begin{table}[h]
+    \centering
+    \caption{Cấu trúc khung BLE truyền từ master về máy tính (tổng $80$~byte).}
+    \label{tab:bleframe}
+    \begin{tabular}{cll}
+        \hline
+        \textbf{Byte} & \textbf{Trường}       & \textbf{Ý nghĩa}                                                     \\
+        \hline
+        $0$           & \texttt{header}       & Byte mở khung (\texttt{0xAA})                                        \\
+        $1$           & \texttt{active\_mask} & Mặt nạ 6 bit: nút đang hoạt động                                     \\
+        $2$--$5$      & \texttt{timestamp}    & Nhãn thời gian khung (\texttt{u32} LE, ms)                           \\
+        $6$--$77$     & \texttt{data}         & 6 nút $\times$ 12 byte: \texttt{ax,ay,az,gx,gy,gz} (\texttt{i16} LE) \\
+        $78$          & \texttt{checksum}     & XOR các byte $0$--$77$                                               \\
+        $79$          & \texttt{footer}       & Byte kết thúc (\texttt{0x55})                                        \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Hồ sơ Nordic UART Service được chọn vì nó mô phỏng một cổng nối tiếp hai chiều
+trên BLE: master ghi luồng byte vào đặc tính TX và máy tính nhận qua cơ chế thông
+báo (notification), rất phù hợp để truyền liên tục các khung nhị phân. Để gửi trọn khung $80$~byte trong một thông báo duy nhất, hai bên cần thương lượng đơn vị truyền tối đa (ATT MTU) lên mức đủ lớn; trong hệ thống, master đặt MTU lên $200$~byte -- dư sức chứa khung $80$~byte trong một thông báo duy nhất. Nếu giữ MTU mặc định $23$~byte (tải hữu ích $20$~byte) thì mỗi khung phải tách thành nhiều thông báo, làm tăng phần tiêu đề và độ trễ, nên việc nâng MTU là cần thiết. Thông lượng và độ trễ của chặng BLE do khoảng thời gian kết nối (connection interval) quyết định. Master không ép cứng tham số này mà chỉ quảng bá dải khoảng kết nối ưu tiên $7{,}5$--$30$~ms qua bản tin quảng cáo (advertising) để thiết bị chủ (máy tính) tự chọn giá trị phù hợp; trong trường hợp xấu nhất với khoảng kết nối $30$~ms, mỗi khung vẫn được chuyển giao trong vòng khoảng $30$~ms. Với lưu lượng chỉ $80$~byte
+mỗi $20$~ms ($\approx 32$~kbit/s ở mức ứng dụng), băng thông yêu cầu thấp hơn
+nhiều năng lực của một kết nối BLE hiện đại, nên chặng này đáp ứng thoải mái yêu
+cầu thời gian thực của hệ thống.
+
+Hình~\ref{fig:blecapture} minh hoạ dữ liệu khung BLE nhận được tại máy tính trong một phiên thu thử, quan sát qua công cụ gỡ lỗi BLE.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.7\textwidth]{figures/ble_capture.png}
+    \framebox[0.7\textwidth]{\rule{0pt}{4.5cm}\textit{Ảnh chụp màn hình khung BLE 80 byte nhận được tại máy tính (chèn ảnh tại đây)}}
+    \caption{Ảnh chụp màn hình luồng khung nhị phân $80$~byte nhận được qua hồ sơ Nordic UART Service tại máy tính trong một phiên thu thử.}
+    \label{fig:blecapture}
+\end{figure}
+
+\subsection{Phân tích băng thông, độ trễ và độ tin cậy}
+\label{subsec:tx_budget}
+Phần này tổng hợp ba khía cạnh định lượng quyết định khả năng đáp ứng các chỉ
+tiêu trong Bảng~\ref{tab:dacta} của toàn tuyến truyền: băng thông, độ trễ đầu
+cuối và độ tin cậy.
+
+Về băng thông, cả hai chặng đều hoạt động với biên độ dự trữ lớn: chặng ESP-NOW
+tải tổng cộng $\approx 43$~kbit/s từ sáu nút, còn chặng BLE tải
+$\approx 32$~kbit/s sau khi master nén sáu bản tin thành một khung duy nhất. Cả
+hai đều thấp hơn khoảng một bậc độ lớn so với thông lượng khả dụng của công nghệ
+tương ứng, nhờ đó hệ thống có thể đánh đổi băng thông dư để tăng độ tin cậy,
+chẳng hạn giữ tốc độ PHY cơ sở và dùng khung cố định dễ kiểm lỗi.
+
+Về độ trễ, Bảng~\ref{tab:latencybudget} ước lượng ngân sách độ trễ đầu cuối theo
+từng khâu của tuyến truyền.
+
+\begin{table}[h]
+    \centering
+    \caption{Ước lượng ngân sách độ trễ đầu cuối của tuyến truyền (mục tiêu $\le 100$~ms).}
+    \label{tab:latencybudget}
+    \begin{tabular}{p{6.0cm} p{3.0cm} p{4.2cm}}
+        \hline
+        \textbf{Khâu}                           & \textbf{Độ trễ điển hình} & \textbf{Ghi chú}                             \\
+        \hline
+        Lấy mẫu, hiệu chuẩn và đóng gói tại nút & $< 1$~ms                  & Trên ESP32-C3                                \\
+        Chờ khe TDMA                            & $\le 20$~ms               & Tối đa một chu kỳ                            \\
+        Truyền ESP-NOW (air time)               & $< 1$~ms                  & Gói $18$~byte                                \\
+        Gom khung tại master                    & $\le 20$~ms               & Chồng lấp một chu kỳ lấy mẫu                 \\
+        Khoảng kết nối và truyền BLE            & $\le 30$~ms               & Connection interval ưu tiên $7{,}5$--$30$~ms \\
+        Xử lý tại máy tính                      & $\approx 10$~ms           & Lọc, Madgwick, động học                      \\
+        \hline
+        \textbf{Tổng (ước lượng)}               & $\approx 50$--$80$~ms     & Dưới ngưỡng $100$~ms                         \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Bảng~\ref{tab:latencybudget} cho thấy ngay cả khi cộng dồn theo kịch bản thận
+trọng, độ trễ đầu cuối vẫn nằm dưới ngưỡng $100$~ms trong Bảng~\ref{tab:dacta};
+trên thực tế nhiều khâu chồng lấp về thời gian -- việc gom khung tại master diễn
+ra song song với chu kỳ lấy mẫu kế tiếp -- nên độ trễ thực tế thường thấp hơn
+ước lượng này.
+
+Về độ tin cậy, dữ liệu đo từ nút về master được truyền theo kiểu unicast nên đã được hưởng cơ chế báo nhận (ACK) và truyền lại tự động ở tầng MAC của ESP-NOW; riêng bản tin đồng bộ phát quảng bá thì không có ACK. Ở tầng ứng dụng, hệ thống bổ sung thêm ba cơ chế để xử lý những gói vẫn bị mất. Thứ nhất, mỗi
+\texttt{NodePacket} mang một số thứ tự \texttt{seq} cho phép master phát hiện gói
+bị mất của từng nút. Thứ hai, mỗi khung BLE mang một mặt nạ bit
+\texttt{active\_mask} cho biết chính xác những nút có mặt trong khung, để máy tính
+kích hoạt nội suy cho các nút thiếu (Mục~\ref{sec:xulytinhieu}) thay vì chờ truyền
+lại. Thứ ba, một byte tổng kiểm tra XOR giúp phát hiện khung bị hỏng trên chặng
+BLE; tuy XOR chỉ phát hiện chứ không sửa được lỗi và yếu với lỗi đa-bit, nó có
+chi phí tính toán không đáng kể và đủ dùng cho môi trường nhiễu thấp ở cự ly gần.
+Quyết định không chủ động truyền lại ở tầng ứng dụng là có chủ đích: ở tần số $50$~Hz, một mẫu thiếu lẻ tẻ được khâu nội suy khôi phục với sai số nhỏ, trong khi truyền lại ở tầng ứng dụng sẽ làm tăng độ trễ và phá vỡ cấu trúc khe thời gian TDMA; cơ chế truyền lại sẵn có ở tầng MAC của đường unicast đã đủ để giảm thiểu mất mát mà không ảnh hưởng tới lịch khe. Cách tiếp cận ưu tiên độ
+trễ thấp và tính tươi mới của dữ liệu hơn tính toàn vẹn tuyệt đối này phù hợp với
+bài toán theo dõi vận động thời gian thực, nơi một mẫu mới có giá trị hơn một mẫu
+cũ được truyền lại.
+
+% =====================================================================
+% Mục 3.5 — Luồng xử lý tín hiệu — đặt sau Mục 3.4 trong Chương 3
+% =====================================================================
+\section{Thiết kế luồng xử lý tín hiệu}
+\label{sec:luongxuly}
+
+Các thành phần lý thuyết đã trình bày ở chương cơ sở lý thuyết -- hiệu chuẩn
+(Mục~\ref{sec:hieuchuan}), hợp nhất hướng bằng Madgwick (Mục~\ref{sec:madgwick}),
+động học chi trên (Mục~\ref{sec:donghoc}) và các bước lọc -- nội suy
+(Mục~\ref{sec:xulytinhieu}) -- được kết nối lại ở mục này thành một luồng xử lý
+hoàn chỉnh từ tín hiệu thô đến chỉ số lâm sàng. Trọng tâm của mục không phải là
+nhắc lại cơ sở toán học của từng khâu, mà là xác định \textit{thứ tự} các phép xử
+lý và \textit{nơi} chúng được thực hiện (tại nút cảm biến hay tại máy tính), đồng
+thời biện giải các quyết định thiết kế nhạy cảm như vị trí đặt khâu lọc làm mượt.
+Hình~\ref{fig:pipeline_design} tóm tắt toàn bộ luồng và sự phân chia giữa hai miền
+xử lý.
+
+\begin{figure}[h]
+    \centering
+    \resizebox{0.92\textwidth}{!}{%
+        \begin{tikzpicture}[
+                >={Latex[length=2mm]},
+                font=\small,
+                st/.style={draw, rounded corners, align=center, font=\scriptsize, minimum height=8mm, minimum width=36mm, fill=white},
+                grp/.style={draw, dashed, rounded corners, inner sep=4mm}
+            ]
+            \node[st] (l1) {MPU6050 (gia tốc, vận tốc góc thô)};
+            \node[st, below=7mm of l1] (l2) {Hiệu chuẩn + DLPF phần cứng $44$~Hz};
+            \node[st, below=7mm of l2] (l3) {Lấy mẫu $100$~Hz, hạ xuống $50$~Hz};
+            \draw[->] (l1) -- (l2);
+            \draw[->] (l2) -- (l3);
+            \node[st, right=46mm of l1] (r1) {Nội suy lấp mẫu thiếu + quy đổi đơn vị};
+            \node[st, below=7mm of r1] (r2) {Khử bias con quay + Madgwick $\to$ quaternion};
+            \node[st, below=7mm of r2] (r3) {Chuẩn hoá tư thế tham chiếu $\to$ góc Euler};
+            \node[st, below=7mm of r3] (r4) {Lọc làm mượt EMA ($\alpha = 0{,}2$)};
+            \node[st, below=7mm of r4] (r5) {Tính góc khớp};
+            \node[st, below=7mm of r5] (r6) {Trích xuất ROM / SPARC / FFT};
+            \draw[->] (r1) -- (r2);
+            \draw[->] (r2) -- (r3);
+            \draw[->] (r3) -- (r4);
+            \draw[->] (r4) -- (r5);
+            \draw[->] (r5) -- (r6);
+            \draw[->] (l3) -- node[below, font=\scriptsize, align=center] {ESP-NOW\\+ BLE} (r1);
+            \begin{scope}[on background layer]
+                \node[grp, fit=(l1)(l3), label={[font=\bfseries\scriptsize]above:Tại nút cảm biến (firmware)}] {};
+                \node[grp, fit=(r1)(r6), label={[font=\bfseries\scriptsize]above:Tại máy tính (phần mềm)}] {};
+            \end{scope}
+        \end{tikzpicture}%
+    }
+    \caption{Luồng xử lý tín hiệu đầu cuối và sự phân chia giữa hai miền: tại nút cảm biến chỉ thực hiện lọc DLPF phần cứng, hiệu chuẩn và lấy mẫu/hạ tần; tại máy tính thực hiện nội suy, khử bias, hợp nhất Madgwick, chuẩn hoá tham chiếu, lọc làm mượt EMA (đặt sau Madgwick), tính góc khớp và trích xuất chỉ số lâm sàng.}
+    \label{fig:pipeline_design}
+\end{figure}
+
+\subsection{Phân chia hai miền xử lý}
+\label{subsec:xl_phanchia}
+Luồng xử lý được tách thành hai miền theo ranh giới truyền không dây. Miền thứ
+nhất nằm tại nút cảm biến, chỉ gồm các thao tác gắn chặt với thời điểm thu mẫu và
+phải chạy trên tài nguyên hạn chế của ESP32-C3. Miền thứ hai nằm tại máy tính, gồm
+các thao tác giàu tính toán và không nhạy cảm với độ trễ vài chục mili-giây.
+Nguyên tắc phân chia là: giữ ở nút những gì bắt buộc phải làm gần cảm biến để bảo
+toàn chất lượng và tính toàn vẹn thời gian của tín hiệu, còn dồn về máy tính những
+gì cần năng lực tính toán hoặc cần dữ liệu của \textit{nhiều} nút (như tính góc
+khớp giữa hai đoạn chi liền kề). Cách phân chia này vừa đáp ứng ràng buộc tài
+nguyên ở Mục~\ref{subsec:yc_rangbuoc}, vừa cho phép tinh chỉnh thuật toán xử lý ở
+máy tính mà không phải nạp lại firmware.
+
+\subsection{Xử lý tại nút cảm biến}
+\label{subsec:xl_node}
+Tại mỗi nút, tín hiệu thô từ MPU6050 đi qua một số thao tác trước khi truyền. Thứ
+nhất, bộ lọc thông thấp số tích hợp sẵn trong MPU6050 (DLPF) được cấu hình ở băng
+thông khoảng $44$~Hz; vì đây là bộ lọc \textit{phần cứng} nằm ngay trước khối
+chuyển đổi nội bộ của cảm biến, nó vừa khử nhiễu tần số cao vừa đóng vai trò lọc
+chống chồng phổ (anti-aliasing) trước khi lấy mẫu. Thứ hai, các tham số hiệu chuẩn
+xác định theo quy trình ở Mục~\ref{sec:hieuchuan} được áp để bù phần sai số tất
+định (độ lệch không và hệ số tỷ lệ) của từng cảm biến. Thứ ba, nút lấy mẫu cảm
+biến ở tần số $100$~Hz rồi hạ xuống $50$~Hz khi truyền: việc lấy mẫu dư rồi hạ tần
+giúp DLPF làm việc ở vùng tần số thuận lợi và để lại biên dự trữ so với mức Nyquist
+của vận động chi trên. Đáng lưu ý, ở nút \textit{không} có thêm bất kỳ bộ lọc số
+phần mềm nào ngoài DLPF phần cứng; mọi khâu lọc số mềm đều được dời về máy tính
+(Mục~\ref{subsec:xl_locmuot}) nhằm tránh làm mượt trùng lặp và giữ firmware đơn
+giản. Số đo sau các bước trên được gắn nhãn thời gian đã đồng bộ
+(Mục~\ref{subsec:tx_sync}) và đóng vào \texttt{NodePacket} dưới dạng số nguyên
+thô; việc quy đổi sang đơn vị vật lý được để dành cho máy tính. Chi tiết hiện thực
+các thao tác này thuộc về phần lập trình firmware ở Chương~\ref{chap:trienkhai}.
+
+\subsection{Hợp nhất hướng và tính góc khớp tại máy tính}
+\label{subsec:xl_server}
+Tại máy tính, mỗi khung dữ liệu nhận được đi qua chuỗi xử lý sau. (i) Tái dựng
+chuỗi mẫu đều và nội suy lấp các mẫu thiếu dựa trên mặt nạ \texttt{active\_mask}
+của khung BLE (Mục~\ref{subsec:tx_budget}), đồng thời quy đổi số nguyên thô về đơn
+vị vật lý. (ii) Ước lượng và khử độ trôi không (bias) của con quay trong thời gian
+chạy nhằm hạn chế tích luỹ sai số góc. (iii) Hợp nhất gia tốc và vận tốc góc đã
+xử lý thành quaternion hướng bằng bộ lọc Madgwick (Mục~\ref{sec:madgwick}), trong
+đó hệ số $\beta$ tự nó đã đóng vai trò một khâu lọc thông thấp ngầm trên hướng ước
+lượng. (iv) Chuẩn hoá theo tư thế tham chiếu: quaternion của mỗi đoạn chi được
+nhân với nghịch đảo của quaternion ghi tại tư thế hiệu chuẩn ban đầu, nhằm khử
+phép lệch giữa hệ trục cảm biến và hệ trục giải phẫu (Mục~\ref{subsec:dh_canchinh})
+và đưa mọi đoạn chi về cùng một gốc quy chiếu. (v) Chuyển quaternion đã chuẩn hoá
+sang góc Euler để biểu diễn hướng theo các trục giải phẫu. (vi) Tính các góc khớp
+của vai, khuỷu và cổ tay từ hướng tương đối giữa hai đoạn chi liền kề theo mô hình
+động học ở Mục~\ref{sec:donghoc}. Vì bước (vi) cần dữ liệu hướng của \textit{hai}
+đoạn chi cùng lúc nên nó bắt buộc phải đặt ở máy tính, nơi đã gom đủ dữ liệu của cả
+sáu nút.
+
+\subsection{Vị trí khâu lọc làm mượt}
+\label{subsec:xl_locmuot}
+Một quyết định thiết kế quan trọng của luồng xử lý là \textit{vị trí} đặt bộ lọc
+làm mượt số ở máy tính. Hệ thống dùng một bộ lọc trung bình trượt theo cấp số nhân
+(EMA), tức một bộ lọc thông thấp bậc nhất có dạng
+\begin{equation}
+    \label{eq:ema}
+    y[n] = \alpha\, x[n] + (1-\alpha)\, y[n-1], \qquad \alpha = 0{,}2,
+\end{equation}
+trong đó $\alpha$ là hệ số làm mượt có thể điều chỉnh trên giao diện. Với
+$\alpha = 0{,}2$ và tần số mẫu $50$~Hz, tần số cắt hiệu dụng của bộ lọc vào khoảng
+$1{,}5$--$2$~Hz, phù hợp với các vận động phục hồi diễn ra chậm; người dùng có thể
+tăng $\alpha$ để bám chuyển động nhanh hơn hoặc giảm $\alpha$ để mượt hơn, đổi lấy
+độ trễ.
+
+Điểm mấu chốt là bộ lọc EMA được đặt \textit{sau} bộ hợp nhất Madgwick -- cụ thể
+là tác động lên hướng (góc Euler) ở đầu ra -- chứ không đặt lên tín hiệu quán tính
+thô trước khi hợp nhất. Lý do là trong luồng đã có sẵn hai cơ chế làm mượt: bộ lọc
+DLPF phần cứng $44$~Hz ở nút và hiệu ứng lọc thông thấp ngầm của hệ số $\beta$
+trong Madgwick. Nếu thêm một bộ EMA mạnh \textit{trước} khâu hợp nhất, tín hiệu
+vào Madgwick sẽ bị làm mượt chồng lặp và mang thêm trễ pha, làm méo phép tích phân
+vận tốc góc cũng như phép hiệu chỉnh bằng gia tốc, qua đó suy giảm độ chính xác
+động của hướng ước lượng. Ngược lại, khi đặt EMA ở đầu ra, bộ lọc chỉ khử phần dao
+động dư (jitter) còn lại trên góc hiển thị mà không can thiệp vào động học bên
+trong của bộ hợp nhất. Nói cách khác, việc tách bạch ``làm sạch để hợp nhất''
+(DLPF phần cứng) khỏi ``làm mượt để hiển thị'' (EMA sau Madgwick) giúp đạt đồng
+thời độ chính xác động và độ mượt trực quan, đồng thời tránh hiện tượng làm mượt
+hai lần. Khâu EMA này được hiện thực ở phần mềm phía máy tính; chi tiết mã nguồn
+thuộc về Chương~\ref{chap:trienkhai}.
+
+Hiệu quả của bộ lọc làm mượt được minh hoạ ở Hình~\ref{fig:ema_effect}, so sánh chuỗi góc khớp trước và sau khi áp EMA.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.85\textwidth]{figures/ema_effect.png}
+    \framebox[0.85\textwidth]{\rule{0pt}{4.5cm}\textit{Đồ thị so sánh góc khớp thô và góc khớp sau lọc EMA theo thời gian (chèn ảnh tại đây)}}
+    \caption{So sánh chuỗi góc khớp trước (đường thô, nhiều dao động) và sau khi lọc làm mượt EMA với $\alpha = 0{,}2$; bộ lọc khử phần dao động dư mà vẫn bám theo xu hướng vận động.}
+    \label{fig:ema_effect}
+\end{figure}
+
+\subsection{Trích xuất chỉ số lâm sàng}
+\label{subsec:xl_chiso}
+Từ chuỗi góc khớp đã làm mượt theo thời gian, máy tính trích xuất các chỉ số định
+lượng phục vụ đánh giá phục hồi. Tầm vận động (ROM) được xác định từ biên độ cực
+đại và cực tiểu của mỗi góc khớp trong một động tác hoặc một phiên đo. Độ mượt
+chuyển động được lượng hoá bằng chỉ số SPARC tính trên phổ của vận tốc góc khớp,
+phản ánh mức độ trơn tru của vận động. Ngoài ra, phép phân tích phổ (FFT) trên
+chuỗi góc hoặc vận tốc góc cung cấp thông tin về thành phần tần số của vận động,
+hỗ trợ phát hiện run hoặc dao động bất thường. Các chỉ số này, cùng với đồ thị góc
+khớp theo thời gian, được hiển thị trực quan và lưu trữ để kỹ thuật viên theo dõi
+tiến triển giữa các buổi tập. Nhờ đặt toàn bộ khâu trích xuất ở máy tính, hệ thống
+có thể bổ sung hoặc tinh chỉnh các chỉ số mà không ảnh hưởng tới phần cứng hay
+firmware của nút.
+
+Hình~\ref{fig:clinical_plot} là ảnh chụp màn hình phần trình bày các chỉ số lâm sàng trên giao diện máy tính, gồm đồ thị góc khớp theo thời gian cùng các giá trị ROM và SPARC.
+
+\begin{figure}[h]
+    \centering
+    % \includegraphics[width=0.9\textwidth]{figures/clinical_metrics.png}
+    \framebox[0.9\textwidth]{\rule{0pt}{5cm}\textit{Ảnh chụp màn hình đồ thị góc khớp và bảng chỉ số ROM/SPARC trên giao diện (chèn ảnh tại đây)}}
+    \caption{Ảnh chụp giao diện máy tính trình bày đồ thị góc khớp theo thời gian cùng các chỉ số tầm vận động (ROM) và độ mượt chuyển động (SPARC) trích xuất trong một phiên đo.}
+    \label{fig:clinical_plot}
+\end{figure}
+
+
+% =====================================================================
+% Kết luận Chương 3 — đặt ở cuối Chương 3
+% =====================================================================
+\section{Kết luận chương}
+\label{sec:ketchuong3}
+
+Chương này đã trình bày trọn vẹn thiết kế của hệ thống theo dõi vận động chi trên
+dùng sáu cảm biến MPU6050, đi từ phân tích yêu cầu tới thiết kế chi tiết của từng
+thành phần. Mục~\ref{sec:yeucau} xác lập tập yêu cầu chức năng, phi chức năng và
+các ràng buộc, cô đọng thành bảng đặc tả kỹ thuật mục tiêu (Bảng~\ref{tab:dacta})
+làm cơ sở cho mọi quyết định về sau. Mục~\ref{sec:kientruc} đề xuất kiến trúc phân
+lớp ba tầng -- thu nhận, truyền dẫn và xử lý -- phản ánh đúng luồng dữ liệu một
+chiều của hệ thống. Mục~\ref{sec:phancung} cụ thể hoá lớp thu nhận thành thiết kế
+phần cứng với kiến trúc phân tán, trong đó mỗi MPU6050 được ghép riêng với một
+ESP32-C3 để giải quyết ràng buộc địa chỉ I2C, cùng chuỗi nguồn phù hợp cho từng
+loại nút. Mục~\ref{sec:truyenkhongday} thiết kế đường truyền hai chặng: ESP-NOW
+unicast kết hợp phân khe TDMA và đồng bộ thời gian định kỳ cho chặng nút--master,
+và BLE với hồ sơ Nordic UART Service cùng khung nhị phân $80$~byte cho chặng
+master--máy tính. Cuối cùng, Mục~\ref{sec:luongxuly} kết nối các khâu xử lý thành
+một luồng hoàn chỉnh, làm rõ sự phân chia giữa xử lý tại nút (lọc phần cứng, lấy
+mẫu) và tại máy tính (hợp nhất, tính góc khớp, trích xuất chỉ số), đặc biệt biện
+giải việc đặt khâu lọc làm mượt sau bộ hợp nhất Madgwick.
+
+Tổng hợp lại, các quyết định thiết kế đều được dẫn dắt nhất quán bởi các chỉ tiêu
+trong Bảng~\ref{tab:dacta}: kiến trúc phân tán và TDMA bảo đảm tần số lấy mẫu
+$50$~Hz và độ lệch đồng bộ dưới $5$~ms; ngân sách độ trễ ước lượng nằm dưới ngưỡng
+$100$~ms; còn việc phân tách lọc -- hợp nhất hướng tới mục tiêu sai số góc khớp đủ
+nhỏ để có ý nghĩa lâm sàng. Thiết kế trình bày ở chương này là bản thiết kế tham
+chiếu cho bước hiện thực hoá. Chương tiếp theo (Chương~\ref{chap:trienkhai}) sẽ
+trình bày chi tiết việc lập trình firmware cho nút và master, hiện thực các thuật
+toán hiệu chuẩn, Madgwick và tính góc khớp, cũng như xây dựng phần mềm phía máy
+chủ để hoàn thiện hệ thống.
+\end{document}

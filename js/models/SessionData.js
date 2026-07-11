@@ -254,6 +254,8 @@ export class SessionData {
       headers.push(
         `${seg}_ax`, `${seg}_ay`, `${seg}_az`,
         `${seg}_gx`, `${seg}_gy`, `${seg}_gz`,
+        `${seg}_cal_ax`, `${seg}_cal_ay`, `${seg}_cal_az`,
+        `${seg}_cal_gx`, `${seg}_cal_gy`, `${seg}_cal_gz`,
         `${seg}_roll`, `${seg}_pitch`, `${seg}_yaw`
       );
     }
@@ -264,8 +266,13 @@ export class SessionData {
       const row = [sample.frameIndex, sample.timestamp];
       for (const seg of segments) {
         const r = sample.raw[seg];
+        const c = sample.calibrated[seg];
         const o = sample.orientation[seg];
-        row.push(r.ax, r.ay, r.az, r.gx, r.gy, r.gz, o.roll, o.pitch, o.yaw);
+        row.push(
+          r.ax, r.ay, r.az, r.gx, r.gy, r.gz,
+          c.ax, c.ay, c.az, c.gx, c.gy, c.gz,
+          o.roll, o.pitch, o.yaw
+        );
       }
       const j = sample.jointAngles;
       row.push(j.shoulderFlexion, j.shoulderAbduction, j.elbowFlexion, j.wristFlexion, j.wristDeviation);

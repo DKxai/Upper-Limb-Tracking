@@ -6,19 +6,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description"
     content="Arm Motion Tracking Dashboard - Real-time visualization of MPU6050 sensor data for arm movement health monitoring using ESP32 and Bluetooth">
-  <title>Arm Motion Tracking Dashboard</title>
+  <title>Motion Track — Theo dõi vận động chi trên</title>
+
+  <!-- Apply theme as early as possible to avoid a flash of the wrong theme -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('armtrack-theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+    })();
+  </script>
 
   <!-- Stylesheets -->
   <link rel="stylesheet" href="css/index.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/charts.css">
+  <link rel="stylesheet" href="css/arm3d-styles.css">
 
   <!-- Chart.js 4.x -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
   <!-- Favicon -->
   <link rel="icon"
-    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💪</text></svg>">
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%236366f1'/><text x='50' y='68' font-size='52' font-family='Inter,sans-serif' font-weight='700' fill='white' text-anchor='middle'>AT</text></svg>">
 </head>
 
 <body>
@@ -30,67 +44,29 @@
       <!-- Logo -->
       <div class="sidebar-header">
         <div class="sidebar-logo">
-          <div class="sidebar-logo-icon">💪</div>
+          <div class="sidebar-logo-icon">AT</div>
           <div class="sidebar-logo-text">
             <span class="sidebar-logo-title">Motion Track</span>
-            <span class="sidebar-logo-subtitle">Arm Health Monitor</span>
+            <span class="sidebar-logo-subtitle">Theo dõi chi trên</span>
           </div>
+        </div>
+
+        <!-- Role switch (Bệnh nhân / Bác sĩ) -->
+        <div class="role-switch" id="role-switch" role="tablist" aria-label="Chế độ giao diện">
+          <button class="role-switch-btn active" data-role="patient" role="tab">Bệnh nhân</button>
+          <button class="role-switch-btn" data-role="doctor" role="tab">Bác sĩ</button>
         </div>
       </div>
 
-      <!-- Navigation -->
-      <nav class="sidebar-nav">
-        <!-- Overview -->
-        <div class="sidebar-section-label">Overview</div>
-        <div class="sidebar-nav-item active" data-page="dashboard">
-          <span class="sidebar-nav-icon">📊</span>
-          <span>Dashboard</span>
-        </div>
-
-        <!-- Charts -->
-        <div class="sidebar-section-label">Charts</div>
-        <div class="sidebar-nav-item" data-page="raw-data">
-          <span class="sidebar-nav-icon">📈</span>
-          <span>Raw Sensor Data</span>
-        </div>
-        <div class="sidebar-nav-item" data-page="angle">
-          <span class="sidebar-nav-icon">📐</span>
-          <span>Angle (RPY & Joints)</span>
-        </div>
-        <div class="sidebar-nav-item" data-page="rom">
-          <span class="sidebar-nav-icon">🔄</span>
-          <span>Range of Motion</span>
-        </div>
-        <div class="sidebar-nav-item" data-page="clinical">
-          <span class="sidebar-nav-icon">🩺</span>
-          <span>Phân tích Lâm sàng</span>
-        </div>
-
-        <!-- Data -->
-        <div class="sidebar-section-label">Data</div>
-        <div class="sidebar-nav-item" data-page="data-table">
-          <span class="sidebar-nav-icon">📋</span>
-          <span>Data Table</span>
-        </div>
-        <div class="sidebar-nav-item" data-page="history">
-          <span class="sidebar-nav-icon">💾</span>
-          <span>Database History</span>
-        </div>
-
-        <!-- System -->
-        <div class="sidebar-section-label">System</div>
-        <div class="sidebar-nav-item" data-page="settings">
-          <span class="sidebar-nav-icon">⚙️</span>
-          <span>Settings</span>
-        </div>
-      </nav>
+      <!-- Navigation (rendered from NAV_SECTIONS, filtered by role) -->
+      <nav class="sidebar-nav" id="sidebar-nav"></nav>
 
       <!-- Connection Panel (Sidebar Footer) -->
       <div class="sidebar-footer">
         <div class="connection-panel">
           <div class="connection-status-bar">
             <span class="badge-dot disconnected" id="status-dot"></span>
-            <span id="status-label">Disconnected</span>
+            <span id="status-label">Chưa kết nối</span>
           </div>
           <div class="connection-info">
             <div class="connection-info-row">
@@ -106,6 +82,9 @@
       </div>
     </aside>
 
+    <!-- Backdrop for mobile sidebar drawer -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
     <!-- ═══════════════════════════════════════ -->
     <!--   MAIN CONTENT                         -->
     <!-- ═══════════════════════════════════════ -->
@@ -113,34 +92,23 @@
       <!-- Header -->
       <header class="header" id="main-header">
         <div class="header-left">
-          <h1 class="header-title" id="header-title">Dashboard</h1>
+          <button class="menu-toggle" id="btn-menu-toggle" aria-label="Mở menu điều hướng" title="Menu">Menu</button>
+          <h1 class="header-title" id="header-title">Tổng quan</h1>
         </div>
         <div class="header-right">
           <!-- Action Buttons -->
-          <button class="btn btn-primary btn-sm" id="btn-connect" title="Kết nối qua Bluetooth Low Energy (BLE)">
-            📶 Bluetooth
-          </button>
-          <button class="btn btn-secondary btn-sm" id="btn-usb" title="Kết nối qua cáp USB Serial">
-            🔌 USB
-          </button>
-          <button class="btn btn-secondary btn-sm" id="btn-record" title="Bắt đầu ghi phiên tập vào Database (nhập tên bệnh nhân)">
-            ⏺ Record
-          </button>
+          <button class="btn btn-primary btn-sm" id="btn-connect" title="Kết nối qua Bluetooth Low Energy (BLE)">Bluetooth</button>
+          <button class="btn btn-secondary btn-sm" id="btn-usb" title="Kết nối qua cáp USB Serial">USB</button>
+          <button class="btn btn-secondary btn-sm" id="btn-demo" title="Chạy dữ liệu mô phỏng (không cần phần cứng)">Demo</button>
+          <button class="btn btn-secondary btn-sm" id="btn-record" title="Bắt đầu ghi buổi tập vào cơ sở dữ liệu (nhập tên bệnh nhân)">Ghi buổi tập</button>
 
-          <div style="width: 1px; height: 24px; background: var(--color-border); margin: 0 4px;"></div>
+          <div class="header-divider"></div>
 
-          <button class="btn btn-ghost btn-sm" id="btn-calibrate" title="Hiệu chuẩn cảm biến - Yêu cầu đứng nghiêm, duỗi thẳng tay">
-            🔧 Calibrate
-          </button>
-          <button class="btn btn-ghost btn-sm" id="btn-reset" title="Xóa toàn bộ dữ liệu hiện tại và bắt đầu lại">
-            🔄 Reset
-          </button>
-          <button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Xuất dữ liệu ra file CSV">
-            📥 CSV
-          </button>
-          <button class="btn btn-ghost btn-sm" id="btn-export-json" title="Xuất dữ liệu ra file JSON">
-            📦 JSON
-          </button>
+          <button class="btn btn-ghost btn-sm" id="btn-calibrate" title="Hiệu chuẩn cảm biến - Yêu cầu đứng nghiêm, duỗi thẳng tay">Hiệu chuẩn</button>
+          <button class="btn btn-ghost btn-sm" id="btn-reset" title="Xóa toàn bộ dữ liệu hiện tại và bắt đầu lại">Đặt lại</button>
+          <button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Xuất dữ liệu ra file CSV">CSV</button>
+          <button class="btn btn-ghost btn-sm" id="btn-export-json" title="Xuất dữ liệu ra file JSON">JSON</button>
+          <button class="btn btn-ghost btn-sm" id="btn-theme" title="Chuyển nền sáng/tối">Giao diện</button>
         </div>
       </header>
 
@@ -148,13 +116,28 @@
       <div class="content-area" id="content-area">
         <!-- Content rendered dynamically by DashboardView -->
         <div class="empty-state">
-          <div class="empty-state-icon">📡</div>
-          <div class="empty-state-title">Loading Dashboard...</div>
-          <div class="empty-state-desc">Initializing components...</div>
+          <div class="empty-state-title">Đang tải…</div>
+          <div class="empty-state-desc">Khởi tạo các thành phần giao diện.</div>
         </div>
       </div>
     </main>
   </div>
+
+  <!-- Three.js importmap (required for 3D Humanoid Model + GLTFLoader + OrbitControls) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <!-- Preload Three.js as global for backward compatibility (old Arm3DView) -->
+  <script type="module">
+    import * as THREE from 'three';
+    window.THREE = THREE;
+  </script>
 
   <!-- Application Script -->
   <script type="module" src="js/app.js"></script>

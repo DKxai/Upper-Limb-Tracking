@@ -11,8 +11,8 @@ export class HistoryView {
     this.container.innerHTML = `
       <div class="card">
         <div class="card-header">
-          <h2 class="card-title">💾 Lịch Sử Phiên Tập (Database)</h2>
-          <button class="btn btn-primary btn-sm" id="btn-refresh-history">🔄 Làm mới</button>
+          <h2 class="card-title">Lịch sử buổi tập</h2>
+          <button class="btn btn-primary btn-sm" id="btn-refresh-history">Làm mới</button>
         </div>
         <div class="card-body">
           <table class="data-table" style="width: 100%; text-align: left;">
@@ -36,7 +36,7 @@ export class HistoryView {
       <div id="analytics-container" style="display: none; margin-top: 20px;">
         <div class="card">
           <div class="card-header">
-            <h2 class="card-title">📊 Phân tích Phiên: <span id="lbl-session-id"></span></h2>
+            <h2 class="card-title">Phân tích buổi tập: <span id="lbl-session-id"></span></h2>
             <button class="btn btn-secondary btn-sm" id="btn-close-analytics">Đóng</button>
           </div>
           <div class="card-body">
@@ -61,7 +61,7 @@ export class HistoryView {
               </div>
             </div>
             <div style="margin-top: 20px;">
-              <button class="btn btn-primary" id="btn-replay-session">▶ Xem lại 3D & Đồ thị (Replay)</button>
+              <button class="btn btn-primary" id="btn-replay-session">Xem lại 3D & Đồ thị</button>
             </div>
           </div>
         </div>
@@ -114,7 +114,7 @@ export class HistoryView {
         <td>${durationSec}s</td>
         <td>${s.total_frames}</td>
         <td>
-          <button class="btn btn-sm btn-primary btn-analyze" data-id="${s.session_id}">📈 Phân tích</button>
+          <button class="btn btn-sm btn-primary btn-analyze" data-id="${s.session_id}">Phân tích</button>
         </td>
       `;
       tbody.appendChild(tr);

@@ -86,14 +86,16 @@ export class SensorDataSample {
    * @param {Object.<string, Orientation>} orientation - Fused orientation per segment
    * @param {JointAngles} jointAngles - Computed joint angles
    */
-  constructor(timestamp, frameIndex, raw = {}, orientation = {}, jointAngles = null) {
+  constructor(timestamp, frameIndex, raw = {}, orientation = {}, jointAngles = null, calibrated = {}) {
     this.timestamp = timestamp;
     this.frameIndex = frameIndex;
     // Dynamically create entries for ALL defined segments
     this.raw = {};
+    this.calibrated = {};
     this.orientation = {};
     for (const seg of Object.values(ArmSegment)) {
       this.raw[seg] = raw[seg] || new IMUReading();
+      this.calibrated[seg] = calibrated[seg] || new IMUReading();
       this.orientation[seg] = orientation[seg] || new Orientation();
     }
     this.jointAngles = jointAngles || new JointAngles();
