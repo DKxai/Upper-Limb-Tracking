@@ -108,24 +108,27 @@ export const CLINICAL_EXERCISES = {
   elbow_flexion: {
     name: 'Gập Khuỷu (Elbow Flexion)',
     clinicalRef: 'AAOS: 0–150°. Target Phase 1: 0–120°',
-    description: 'Gập và duỗi khuỷu tay cân đối',
+    description: 'Gập khuỷu, lòng bàn tay xoay ngửa dần vào trong; hạ xuống thì xoay trả về',
     targetDegrees: 120,
     side: 'bilateral',
     reps: 12,
     holdSec: 1,
-    // Arm ở bên cạnh người, gấp khuỷu lên
+    // Arm ở bên cạnh người, gấp khuỷu lên. proSup âm = ngửa (supination):
+    // curl chuẩn — vừa gập vừa xoay lòng bàn tay vào trong/lên trên, nội suy
+    // keyframe làm twist đồng bộ mượt với pha gập; hạ thì xoay trả về 0.
+    // (Nếu chiều xoay trông ngược trên rig, đổi dấu các giá trị ±60 dưới đây.)
     keyframes: [
-      { t: 0.00, lForearmPitch:   0, rForearmPitch:   0 },  // Duỗi thẳng
-      { t: 0.42, lForearmPitch: 120, rForearmPitch: 120 },  // Gấp đều lên 120°
-      { t: 0.58, lForearmPitch: 120, rForearmPitch: 120 },  // hold
-      { t: 1.00, lForearmPitch:   0, rForearmPitch:   0 },  // Duỗi đều
+      { t: 0.00, lForearmPitch:   0, rForearmPitch:   0, lProSup:   0, rProSup:   0 },  // Duỗi thẳng, bàn tay trung tính
+      { t: 0.42, lForearmPitch: 120, rForearmPitch: 120, lProSup: -60, rProSup: -60 },  // Gập lên + xoay ngửa dần
+      { t: 0.58, lForearmPitch: 120, rForearmPitch: 120, lProSup: -60, rProSup: -60 },  // hold
+      { t: 1.00, lForearmPitch:   0, rForearmPitch:   0, lProSup:   0, rProSup:   0 },  // Hạ đều + xoay trả về
     ],
     // Upper arm: giữ sát người (adduction 0°, slight forward pitch 10°)
     upperArmPitch: 10,
     feedback: {
-      start: 'Gập khuỷu tay lên từ từ',
+      start: 'Gập khuỷu lên, từ từ xoay ngửa lòng bàn tay vào trong',
       peak: 'Giữ ở đỉnh, cảm nhận cơ bắp',
-      end: 'Trả về thẳng',
+      end: 'Hạ xuống từ từ, xoay lòng bàn tay trở về',
     }
   },
 
@@ -159,31 +162,37 @@ export const CLINICAL_EXERCISES = {
   },
 
   /**
-   * WRIST FLEXION/EXTENSION
-   * Chỉ định: Phục hồi sau gãy Colles, phẫu thuật cánh tay
-   * Reference: AAOS Wrist Flexion = 80°, Extension = 70°
+   * WRIST ROTATION — FOREARM PRONATION/SUPINATION
+   * Chỉ định: Phục hồi sau gãy Colles, gãy xương cẳng tay
+   * Reference: AAOS Pronation = 85°, Supination = 90°
+   *
+   * LƯU Ý PHẦN CỨNG: cảm biến đeo Ở CỔ TAY (đầu xa cẳng tay), KHÔNG ở bàn tay
+   * → hệ không đo được gập bàn tay. "Chuyển động cổ tay" đo được là XOAY
+   * cẳng tay (sấp/ngửa), nên guide minh hoạ đúng động tác đó — bàn tay không gập.
    */
   wrist_flexion: {
-    name: 'Gập Cổ Tay (Wrist Flexion/Extension)',
-    clinicalRef: 'AAOS: Flex 0–80°, Ext 0–70°',
-    description: 'Gập và ngửa cổ tay',
+    name: 'Xoay Cổ Tay (Sấp/Ngửa Cẳng Tay)',
+    clinicalRef: 'AAOS: Pronation 0–85°, Supination 0–90°',
+    description: 'Gập khuỷu 90°, xoay cẳng tay úp xuống rồi ngửa lên (không gập bàn tay)',
     targetDegrees: 60,
     side: 'bilateral',
     reps: 15,
     holdSec: 1,
+    // Chuẩn goniometry: đo sấp/ngửa với khuỷu gập 90° sát thân (khóa bù trừ vai).
+    // lProSup dương = sấp (pronation), âm = ngửa (supination).
     keyframes: [
-      { t: 0.00,  lWristPitch:   0, rWristPitch:   0 },
-      { t: 0.25,  lWristPitch:  60, rWristPitch:  60 },  // Flex
-      { t: 0.35,  lWristPitch:  60, rWristPitch:  60 },  // hold
-      { t: 0.50,  lWristPitch:   0, rWristPitch:   0 },  // Neutral
-      { t: 0.75,  lWristPitch: -55, rWristPitch: -55 },  // Extension
-      { t: 0.85,  lWristPitch: -55, rWristPitch: -55 },  // hold
-      { t: 1.00,  lWristPitch:   0, rWristPitch:   0 },
+      { t: 0.00, lForearmPitch: 90, rForearmPitch: 90, lProSup:   0, rProSup:   0 },
+      { t: 0.20, lForearmPitch: 90, rForearmPitch: 90, lProSup:  60, rProSup:  60 },  // sấp
+      { t: 0.35, lForearmPitch: 90, rForearmPitch: 90, lProSup:  60, rProSup:  60 },  // giữ
+      { t: 0.50, lForearmPitch: 90, rForearmPitch: 90, lProSup:   0, rProSup:   0 },  // trung tính
+      { t: 0.70, lForearmPitch: 90, rForearmPitch: 90, lProSup: -60, rProSup: -60 },  // ngửa
+      { t: 0.85, lForearmPitch: 90, rForearmPitch: 90, lProSup: -60, rProSup: -60 },  // giữ
+      { t: 1.00, lForearmPitch: 90, rForearmPitch: 90, lProSup:   0, rProSup:   0 },
     ],
     feedback: {
-      start: 'Gập cổ tay xuống từ từ',
-      peak: 'Giữ, rồi ngửa lên phía trước',
-      end: 'Trả về trung tâm',
+      start: 'Gập khuỷu 90°, xoay lòng bàn tay úp xuống',
+      peak: 'Giữ, rồi xoay ngửa lòng bàn tay lên',
+      end: 'Trả về vị trí trung tính',
     }
   },
 
@@ -201,13 +210,14 @@ export const CLINICAL_EXERCISES = {
     reps: 8,
     holdSec: 1,
     upperArmPitch: 0,
+    // Pha gập khuỷu kèm xoay ngửa lòng bàn tay (như elbow_flexion); duỗi thì trả về.
     keyframes: [
-      { t: 0.00, lPitch:  0, rPitch:  0, lForearmPitch:   0, rForearmPitch:   0 },
-      { t: 0.25, lPitch: 90, rPitch: 90, lForearmPitch:   0, rForearmPitch:   0 }, // nâng tay 90°
-      { t: 0.50, lPitch: 90, rPitch: 90, lForearmPitch: 120, rForearmPitch: 120 }, // gập khuỷu 120°
-      { t: 0.65, lPitch: 90, rPitch: 90, lForearmPitch: 120, rForearmPitch: 120 }, // giữ
-      { t: 0.80, lPitch: 90, rPitch: 90, lForearmPitch:   0, rForearmPitch:   0 }, // duỗi khuỷu
-      { t: 1.00, lPitch:  0, rPitch:  0, lForearmPitch:   0, rForearmPitch:   0 }, // hạ tay
+      { t: 0.00, lPitch:  0, rPitch:  0, lForearmPitch:   0, rForearmPitch:   0, lProSup:   0, rProSup:   0 },
+      { t: 0.25, lPitch: 90, rPitch: 90, lForearmPitch:   0, rForearmPitch:   0, lProSup:   0, rProSup:   0 }, // nâng tay 90°
+      { t: 0.50, lPitch: 90, rPitch: 90, lForearmPitch: 120, rForearmPitch: 120, lProSup: -60, rProSup: -60 }, // gập khuỷu + xoay ngửa dần
+      { t: 0.65, lPitch: 90, rPitch: 90, lForearmPitch: 120, rForearmPitch: 120, lProSup: -60, rProSup: -60 }, // giữ
+      { t: 0.80, lPitch: 90, rPitch: 90, lForearmPitch:   0, rForearmPitch:   0, lProSup:   0, rProSup:   0 }, // duỗi khuỷu + xoay trả về
+      { t: 1.00, lPitch:  0, rPitch:  0, lForearmPitch:   0, rForearmPitch:   0, lProSup:   0, rProSup:   0 }, // hạ tay
     ],
     feedback: {
       start: 'Nâng tay ra phía trước đến ngang vai',
@@ -387,19 +397,20 @@ export class ExerciseAnimator {
   /**
    * Map interpolated keyframe values → joint angles (degrees).
    * pitch = flexion (raise forward), roll = abduction (raise sideways),
-   * forearmPitch = elbow flexion, wristPitch = wrist flexion.
+   * forearmPitch = elbow flexion, proSup = xoay sấp/ngửa cẳng tay.
+   * (Không có "gập bàn tay": cảm biến đeo ở cổ tay, không đo được bàn tay.)
    */
   _anglesFromPose(ex, pose) {
     const upBase = ex.upperArmPitch || 0; // slight forward flexion baseline (e.g. elbow curls)
     return {
-      lFlex:  (pose.lPitch || 0) + upBase,
-      lAbd:   (pose.lRoll  || 0),
-      lElbow: (pose.lForearmPitch || 0),
-      lWrist: (pose.lWristPitch   || 0),
-      rFlex:  (pose.rPitch || 0) + upBase,
-      rAbd:   (pose.rRoll  || 0),
-      rElbow: (pose.rForearmPitch || 0),
-      rWrist: (pose.rWristPitch   || 0),
+      lFlex:   (pose.lPitch || 0) + upBase,
+      lAbd:    (pose.lRoll  || 0),
+      lElbow:  (pose.lForearmPitch || 0),
+      lProSup: (pose.lProSup || 0),
+      rFlex:   (pose.rPitch || 0) + upBase,
+      rAbd:    (pose.rRoll  || 0),
+      rElbow:  (pose.rForearmPitch || 0),
+      rProSup: (pose.rProSup || 0),
     };
   }
 
@@ -412,52 +423,75 @@ export class ExerciseAnimator {
    */
   _poseArms(a, k) {
     const D = Math.PI / 180;
-    const X = new THREE.Vector3(1, 0, 0); // sagittal axis (flexion / forward)
-    const Z = new THREE.Vector3(0, 0, 1); // frontal axis (abduction / sideways)
-    const HINGE = new THREE.Vector3(1, 0, 0); // forearm/wrist local hinge axis (flip to (0,0,1) if elbow bends sideways)
+    const HINGE = new THREE.Vector3(1, 0, 0); // forearm local hinge axis (flip to (0,0,1) if elbow bends sideways)
+    const TWIST = new THREE.Vector3(0, 1, 0); // trục dọc xương (Mixamo: local +Y) — xoay sấp/ngửa cẳng tay
 
     // Upper arm: orient its limb axis along a world-space target direction.
-    const orientUpper = (seg, dir, kk) => {
+    const orientUpper = (seg, dir, kk, twistDeg = 0) => {
       const bone = this.bones[seg];
       const restDir = this.restLimbDir[seg];
       const parentWorld = this.parentWorldRest[seg];
       if (!bone || !restDir || !parentWorld) return;
-      const delta = new THREE.Quaternion().setFromUnitVectors(restDir, dir);
-      const worldNew = delta.multiply(this.boneWorldRest[seg].clone()); // delta * worldRest
+      const swing = new THREE.Quaternion();
+      if (restDir.dot(dir) < -0.9999) {
+        // Đối song song: setFromUnitVectors bất định (trục quay tùy ý → model
+        // lật bất ngờ). Chọn cố định quay 180° quanh trục đứng.
+        swing.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+      } else {
+        swing.setFromUnitVectors(restDir, dir);
+      }
+      const twist = new THREE.Quaternion().setFromAxisAngle(dir, twistDeg * D); // kiểm soát xoay quanh trục xương
+      const worldNew = twist.multiply(swing).multiply(this.boneWorldRest[seg].clone());
       const localNew = parentWorld.clone().invert().multiply(worldNew);
       bone.quaternion.slerp(localNew, kk);
     };
 
-    // Forearm / wrist: pure hinge about a LOCAL axis, relative to the rest pose.
-    // The bone is a child of the (already-posed) upper arm, so it inherits the
-    // arm orientation and only adds the joint bend — this keeps the natural
-    // twist of the limb (no splayed/twisted hands).
-    const hinge = (seg, deg, kk) => {
+    // Forearm: hinge (gập khuỷu) quanh trục LOCAL, relative to the rest pose,
+    // CỘNG twist sấp/ngửa quanh trục dọc xương. Twist là phép quay TRONG CÙNG
+    // (rightmost) nên luôn quay quanh trục cẳng tay hiện tại, kể cả khi khuỷu
+    // đang gập. Bone là con của upper arm (đã pose) nên thừa hưởng hướng tay.
+    const hinge = (seg, deg, kk, twistDeg = 0) => {
       const bone = this.bones[seg];
       const rest = this.restQuaternions[seg];
       if (!bone || !rest) return;
-      const q = rest.clone().multiply(new THREE.Quaternion().setFromAxisAngle(HINGE, deg * D));
+      const q = rest.clone()
+        .multiply(new THREE.Quaternion().setFromAxisAngle(HINGE, deg * D))
+        .multiply(new THREE.Quaternion().setFromAxisAngle(TWIST, twistDeg * D));
       bone.quaternion.slerp(q, kk);
+    };
+
+    // Bàn tay GIỮ CỨNG theo cẳng tay (không bao giờ gập): cảm biến gắn Ở CỔ TAY
+    // (đầu xa cẳng tay), không đo được gập bàn tay — mọi "chuyển động cổ tay"
+    // hiển thị bằng twist sấp/ngửa của cẳng tay ở trên. Ease bàn tay về rest.
+    const relaxHand = (seg, kk) => {
+      const bone = this.bones[seg];
+      const rest = this.restQuaternions[seg];
+      if (!bone || !rest) return;
+      bone.quaternion.slerp(rest, kk);
     };
 
     // Upper-arm direction: arms-down neutral, add abduction then flexion.
     // If a direction looks reversed on your model, flip the sign on that line.
     const upperDir = (flexDeg, abdDeg, side) => {
-      const d = new THREE.Vector3(0, -1, 0);   // arms-down neutral
-      d.applyAxisAngle(Z, side * abdDeg * D);    // abduction (out to the side)
-      d.applyAxisAngle(X, -flexDeg * D);         // flexion (raise forward)
-      return d.normalize();
+      const e = Math.hypot(flexDeg, abdDeg) * D;   // góc nâng tổng
+      const p = Math.atan2(abdDeg, flexDeg);       // hướng nâng: 0=trước, 90°=ngang
+      return new THREE.Vector3(
+        side * Math.sin(e) * Math.sin(p),
+        -Math.cos(e),
+        Math.sin(e) * Math.cos(p)                  // model quay mặt về +Z; đổi dấu nếu ngược
+      ).normalize();
     };
 
-    // LEFT: upper arm (direction) → forearm/elbow + hand/wrist (local hinge)
-    orientUpper('left_upper_arm', upperDir(a.lFlex || 0, a.lAbd || 0, +1), k);
-    hinge('left_forearm', -(a.lElbow || 0), k);  // elbow flexion
-    hinge('left_wrist',   -(a.lWrist || 0), k);  // wrist flexion
+    // LEFT: upper arm (direction) → forearm (hinge + twist sấp/ngửa); bàn tay cứng
+    orientUpper('left_upper_arm', upperDir(a.lFlex || 0, a.lAbd || 0, +1), k, a.lRot || 0);
+    hinge('left_forearm', -(a.lElbow || 0), k, a.lProSup || 0);
+    relaxHand('left_wrist', k);
 
-    // RIGHT (mirror abduction side)
-    orientUpper('right_upper_arm', upperDir(a.rFlex || 0, a.rAbd || 0, -1), k);
-    hinge('right_forearm', -(a.rElbow || 0), k);
-    hinge('right_wrist',   -(a.rWrist || 0), k);
+    // RIGHT (mirror abduction side; twist đảo dấu cho đối xứng gương —
+    // cùng giá trị keyframe/góc đo = cùng động tác sấp/ngửa ở cả 2 tay)
+    orientUpper('right_upper_arm', upperDir(a.rFlex || 0, a.rAbd || 0, -1), k, a.rRot || 0);
+    hinge('right_forearm', -(a.rElbow || 0), k, -(a.rProSup || 0));
+    relaxHand('right_wrist', k);
   }
 
   /** Neutral standing pose: arms down at the sides. */
@@ -468,9 +502,11 @@ export class ExerciseAnimator {
   /**
    * Pose the model directly from anatomical joint angles (degrees), without
    * running a scripted exercise — used to drive the patient/IMU model so it
-   * shares the guide's arms-down neutral (angles 0 = standing, arms at sides).
-   * @param {{lFlex?:number,lAbd?:number,lElbow?:number,lWrist?:number,
-   *          rFlex?:number,rAbd?:number,rElbow?:number,rWrist?:number}} angles
+   * shares the guide's arms-down neutral (angles 0 = standing, arms at sides)
+   * VÀ cùng quy ước chiều (flexion = ra trước) → bệnh nhân và mẫu luôn
+   * chuyển động cùng chiều. proSup = xoay sấp/ngửa cẳng tay (bàn tay không gập).
+   * @param {{lFlex?:number,lAbd?:number,lElbow?:number,lProSup?:number,
+   *          rFlex?:number,rAbd?:number,rElbow?:number,rProSup?:number}} angles
    * @param {number} [k=0.35] slerp factor (smoothing)
    */
   poseFromAngles(angles, k = 0.35) {

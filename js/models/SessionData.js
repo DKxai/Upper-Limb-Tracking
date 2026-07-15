@@ -33,6 +33,15 @@ export class SessionData {
       rightElbowFlexion: { min: Infinity, max: -Infinity },
       rightWristFlexion: { min: Infinity, max: -Infinity },
       rightWristDeviation: { min: Infinity, max: -Infinity },
+      // New: 3D angles
+      leftShoulderElevation: { min: Infinity, max: -Infinity },
+      rightShoulderElevation: { min: Infinity, max: -Infinity },
+      leftShoulderPlane: { min: Infinity, max: -Infinity },
+      rightShoulderPlane: { min: Infinity, max: -Infinity },
+      leftShoulderRotation: { min: Infinity, max: -Infinity },
+      rightShoulderRotation: { min: Infinity, max: -Infinity },
+      leftForearmProSup: { min: Infinity, max: -Infinity },
+      rightForearmProSup: { min: Infinity, max: -Infinity },
     };
   }
 
@@ -58,6 +67,16 @@ export class SessionData {
       this._updateROM('rightElbowFlexion', sample.jointAngles.rightElbowFlexion);
       this._updateROM('rightWristFlexion', sample.jointAngles.rightWristFlexion);
       this._updateROM('rightWristDeviation', sample.jointAngles.rightWristDeviation);
+
+      // New: 3D angles
+      this._updateROM('leftShoulderElevation', sample.jointAngles.leftShoulderElevation);
+      this._updateROM('rightShoulderElevation', sample.jointAngles.rightShoulderElevation);
+      this._updateROM('leftShoulderPlane', sample.jointAngles.leftShoulderPlane);
+      this._updateROM('rightShoulderPlane', sample.jointAngles.rightShoulderPlane);
+      this._updateROM('leftShoulderRotation', sample.jointAngles.leftShoulderRotation);
+      this._updateROM('rightShoulderRotation', sample.jointAngles.rightShoulderRotation);
+      this._updateROM('leftForearmProSup', sample.jointAngles.leftForearmProSup);
+      this._updateROM('rightForearmProSup', sample.jointAngles.rightForearmProSup);
     }
 
     // Trim buffer if exceeds max

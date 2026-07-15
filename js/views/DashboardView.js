@@ -4,7 +4,7 @@
  */
 
 import { eventBus } from '../utils/EventBus.js';
-import { Events, Pages, PAGE_CONFIG, ArmSegment, SEGMENT_LABELS, SEGMENT_COLORS, ConnectionState, NORMAL_ROM, NAV_SECTIONS } from '../utils/Constants.js';
+import { Events, Pages, PAGE_CONFIG, ArmSegment, SEGMENT_LABELS, SEGMENT_COLORS, SEGMENT_BY_INDEX, ConnectionState, NORMAL_ROM, NAV_SECTIONS } from '../utils/Constants.js';
 import { themeManager } from '../utils/ThemeManager.js';
 import { sessionStore } from '../services/SessionStore.js';
 import { ChartView } from './ChartView.js';
@@ -397,7 +397,7 @@ export class DashboardView {
         <div class="section-header">
           <div>
             <div class="section-title">Góc khớp theo thời gian</div>
-            <div class="section-subtitle">Tách theo tay — đủ các góc: gập/dạng vai, gập khuỷu, gập/lệch cổ tay</div>
+            <div class="section-subtitle">Tách theo tay — vai (góc nâng), khuỷu (gập), cổ tay (xoay) — trùng với chuyển động trên model 3D</div>
           </div>
           ${this._renderViewModeToggle()}
         </div>
@@ -466,7 +466,7 @@ export class DashboardView {
           ${Object.values(ArmSegment).map(seg => `
             <div class="card chart-card">
               <div class="card-header">
-                <div class="card-title"><span class="card-title-icon" style="background:${SEGMENT_COLORS[seg]}"></span>${SEGMENT_LABELS[seg]}</div>
+                <div class="card-title"><span class="card-title-icon" style="background:${SEGMENT_COLORS[seg]}"></span>Node ${SEGMENT_BY_INDEX.indexOf(seg)} · ${SEGMENT_LABELS[seg]}</div>
                 <span class="text-xs text-tertiary" id="node-readout-${seg}" style="font-family:'JetBrains Mono',monospace;">—</span>
               </div>
               <div class="card-body"><div class="chart-container small"><canvas id="chart-node-${seg}"></canvas></div></div>
@@ -658,7 +658,7 @@ export class DashboardView {
         <div class="section-header">
           <div>
             <div class="section-title">Live Data Table</div>
-            <div class="section-subtitle">Dữ liệu góc khớp thời gian thực - 2 tay (Dual-Arm)</div>
+            <div class="section-subtitle">Góc khớp thời gian thực (SFTR). Duỗi thẳng = 0°; mỗi ô 2 chiều hiện <b>chiều+/chiều−</b>, cả hai luôn ≥ 0.</div>
           </div>
           <div class="section-actions">
             <button class="btn btn-secondary btn-sm" id="btn-copy-clipboard">Sao chép</button>
@@ -672,12 +672,16 @@ export class DashboardView {
                 <tr>
                   <th>Frame</th>
                   <th>Time (s)</th>
-                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_UPPER_ARM]}">L-Shoulder</th>
-                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_FOREARM]}">L-Elbow</th>
-                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_WRIST]}">L-Wrist</th>
-                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_UPPER_ARM]}">R-Shoulder</th>
-                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_FOREARM]}">R-Elbow</th>
-                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_WRIST]}">R-Wrist</th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_UPPER_ARM]}">L-Vai <small>Gập/Duỗi</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_UPPER_ARM]}">L-Nâng vai</th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_FOREARM]}">L-Khuỷu <small>Gập</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_FOREARM]}">L-Cẳng <small>Ngửa/Sấp</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_WRIST]}">L-Cổ tay <small>Gập/Duỗi</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_UPPER_ARM]}">R-Vai <small>Gập/Duỗi</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_UPPER_ARM]}">R-Nâng vai</th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_FOREARM]}">R-Khuỷu <small>Gập</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_FOREARM]}">R-Cẳng <small>Ngửa/Sấp</small></th>
+                  <th style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_WRIST]}">R-Cổ tay <small>Gập/Duỗi</small></th>
                 </tr>
               </thead>
               <tbody id="live-data-tbody">
@@ -709,8 +713,13 @@ export class DashboardView {
     const sessions = sessionStore.list();
     const mobility = (rom) => {
       const p = (v, n) => Math.min(100, Math.round(((v || 0) / n) * 100)) || 0;
-      return Math.round((p(rom.leftShoulderFlexion, 180) + p(rom.leftElbowFlexion, 150)
-        + p(rom.rightShoulderFlexion, 180) + p(rom.rightElbowFlexion, 150)) / 4);
+      const scores = [
+        p(rom.leftShoulderFlexion, 180), p(rom.leftShoulderElevation, 180),
+        p(rom.leftElbowFlexion, 150), p(rom.leftForearmProSup, 85),
+        p(rom.rightShoulderFlexion, 180), p(rom.rightShoulderElevation, 180),
+        p(rom.rightElbowFlexion, 150), p(rom.rightForearmProSup, 85),
+      ];
+      return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
     };
 
     const rows = sessions.map(s => `
@@ -1265,13 +1274,17 @@ export class DashboardView {
     this._replayPos = 0;
   }
 
-  /** Config of the main joints used by the clinical summary. @private */
+  /**
+   * Config of the main joints used by the clinical summary.
+   * Chỉ các góc CƠ BẢN: bả vai (gập), khuỷu tay, cổ tay — bỏ Elevation & Pro/Sup.
+   * @private
+   */
   _clinicalJoints() {
     return [
       { key: 'leftShoulderFlexion', label: 'Vai trái', normal: 180, color: '#3b82f6' },
       { key: 'rightShoulderFlexion', label: 'Vai phải', normal: 180, color: '#ef4444' },
-      { key: 'leftElbowFlexion', label: 'Khuỷu trái', normal: 145, color: '#06b6d4' },
-      { key: 'rightElbowFlexion', label: 'Khuỷu phải', normal: 145, color: '#f97316' },
+      { key: 'leftElbowFlexion', label: 'Khuỷu trái', normal: 150, color: '#06b6d4' },
+      { key: 'rightElbowFlexion', label: 'Khuỷu phải', normal: 150, color: '#f97316' },
       { key: 'leftWristFlexion', label: 'Cổ tay trái', normal: 80, color: '#8b5cf6' },
       { key: 'rightWristFlexion', label: 'Cổ tay phải', normal: 80, color: '#eab308' },
     ];
@@ -1575,9 +1588,13 @@ export class DashboardView {
     const rom = this.dataVM.session.getROM();
     const items = [
       { label: 'L-Shoulder Flexion', value: rom.leftShoulderFlexion || 0, normal: 180, color: '#3b82f6' },
+      { label: 'L-Shoulder Elevation', value: rom.leftShoulderElevation || 0, normal: 180, color: '#6366f1' },
       { label: 'L-Elbow Flexion', value: rom.leftElbowFlexion || 0, normal: 150, color: '#06b6d4' },
+      { label: 'L-Forearm Pro/Sup', value: rom.leftForearmProSup || 0, normal: 85, color: '#14b8a6' },
       { label: 'R-Shoulder Flexion', value: rom.rightShoulderFlexion || 0, normal: 180, color: '#ef4444' },
+      { label: 'R-Shoulder Elevation', value: rom.rightShoulderElevation || 0, normal: 180, color: '#ec4899' },
       { label: 'R-Elbow Flexion', value: rom.rightElbowFlexion || 0, normal: 150, color: '#f97316' },
+      { label: 'R-Forearm Pro/Sup', value: rom.rightForearmProSup || 0, normal: 85, color: '#f59e0b' },
     ];
 
     return items.map(item => {
@@ -1795,6 +1812,15 @@ export class DashboardView {
     if (!tbody) return;
 
     const samples = this.dataVM.session.getLastN(20).slice().reverse();
+    // SFTR: tách 1 góc có dấu thành 2 số ≥ 0 (chiều dương / chiều âm), mốc duỗi thẳng = 0°.
+    // Số nào ≈ 0 nghĩa là đang không chuyển động theo chiều đó.
+    const pair = (v) => {
+      const x = v || 0;
+      const pos = Math.max(0, x).toFixed(0);
+      const neg = Math.max(0, -x).toFixed(0);
+      return `<span title="chiều dương">${pos}</span>/<span title="chiều âm" style="opacity:.6">${neg}</span>°`;
+    };
+    const one = (v) => `${Math.max(0, v || 0).toFixed(1)}°`;
     tbody.innerHTML = samples.map(s => {
       const j = s.jointAngles || {};
       const time = s.timestamp ? (s.timestamp / 1000).toFixed(2) : (s.relativeTime ? (s.relativeTime / 1000).toFixed(2) : '—');
@@ -1802,12 +1828,16 @@ export class DashboardView {
       <tr>
         <td>${s.frameIndex}</td>
         <td>${time}</td>
-        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_UPPER_ARM]}">${(j.leftShoulderFlexion || 0).toFixed(1)}°</td>
-        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_FOREARM]}">${(j.leftElbowFlexion || 0).toFixed(1)}°</td>
-        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_WRIST]}">${(j.leftWristFlexion || 0).toFixed(1)}°</td>
-        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_UPPER_ARM]}">${(j.rightShoulderFlexion || 0).toFixed(1)}°</td>
-        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_FOREARM]}">${(j.rightElbowFlexion || 0).toFixed(1)}°</td>
-        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_WRIST]}">${(j.rightWristFlexion || 0).toFixed(1)}°</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_UPPER_ARM]}">${pair(j.leftShoulderFlexion)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_UPPER_ARM]}">${one(j.leftShoulderElevation)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_FOREARM]}">${one(j.leftElbowFlexion)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_FOREARM]}">${pair(j.leftForearmProSup)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.LEFT_WRIST]}">${pair(j.leftWristFlexion)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_UPPER_ARM]}">${pair(j.rightShoulderFlexion)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_UPPER_ARM]}">${one(j.rightShoulderElevation)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_FOREARM]}">${one(j.rightElbowFlexion)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_FOREARM]}">${pair(j.rightForearmProSup)}</td>
+        <td style="color: ${SEGMENT_COLORS[ArmSegment.RIGHT_WRIST]}">${pair(j.rightWristFlexion)}</td>
       </tr>
     `;
     }).join('');
@@ -1817,9 +1847,13 @@ export class DashboardView {
     const rom = this.dataVM.session.getROM();
     const items = [
       { label: 'L-Shoulder Flexion', value: rom.leftShoulderFlexion || 0, normal: 180 },
+      { label: 'L-Shoulder Elevation', value: rom.leftShoulderElevation || 0, normal: 180 },
       { label: 'L-Elbow Flexion', value: rom.leftElbowFlexion || 0, normal: 150 },
+      { label: 'L-Forearm Pro/Sup', value: rom.leftForearmProSup || 0, normal: 85 },
       { label: 'R-Shoulder Flexion', value: rom.rightShoulderFlexion || 0, normal: 180 },
+      { label: 'R-Shoulder Elevation', value: rom.rightShoulderElevation || 0, normal: 180 },
       { label: 'R-Elbow Flexion', value: rom.rightElbowFlexion || 0, normal: 150 },
+      { label: 'R-Forearm Pro/Sup', value: rom.rightForearmProSup || 0, normal: 85 },
     ];
 
     items.forEach(item => {
@@ -1834,12 +1868,9 @@ export class DashboardView {
       }
     });
 
-    // Calculate Mobility Score
-    const score1 = Math.min(100, Math.round((items[0].value / items[0].normal) * 100)) || 0;
-    const score2 = Math.min(100, Math.round((items[1].value / items[1].normal) * 100)) || 0;
-    const score3 = Math.min(100, Math.round((items[2].value / items[2].normal) * 100)) || 0;
-    const score4 = Math.min(100, Math.round((items[3].value / items[3].normal) * 100)) || 0;
-    const avgScore = Math.round((score1 + score2 + score3 + score4) / 4) || 0;
+    // Calculate Mobility Score (dynamic: works with any number of items)
+    const scores = items.map(it => Math.min(100, Math.round((it.value / it.normal) * 100)) || 0);
+    const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
     
     const scoreEl = document.getElementById('live-mobility-score');
     if (scoreEl) {

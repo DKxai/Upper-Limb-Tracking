@@ -306,32 +306,30 @@ export class Arm3DViewHumanoid {
   }
 
   /**
-   * Drive the patient model from the sample's anatomical joint angles (which the
-   * fusion already zeroes at the calibrated neutral pose). All angles 0 ⇒ the
-   * arms-down standing pose, so the avatar matches the patient at calibration
-   * (no more T-pose). Uses the same anatomical poser as the guide.
+   * Drive the patient model from anatomical JOINT ANGLES via the SAME poser as
+   * the guide (ExerciseAnimator.poseFromAngles). Vì cả hai model dùng chung quy
+   * ước giải phẫu (flexion = ra trước, abduction = sang bên, 0° = đứng nghiêm
+   * tay xuôi — fusion đã zero tại tư thế hiệu chuẩn), bệnh nhân và mẫu luôn
+   * chuyển động CÙNG CHIỀU — hết lỗi quay ngược ra sau của đường quaternion thô.
+   *
+   * Cảm biến thứ 3 gắn Ở CỔ TAY (đầu xa cẳng tay), KHÔNG ở bàn tay → không đo
+   * được gập bàn tay; "chuyển động cổ tay" = xoay sấp/ngửa cẳng tay (proSup).
+   * Bàn tay model giữ cứng theo cẳng tay (relaxHand trong poser).
    */
   _updateRealModel(sample) {
-    const ja = sample && sample.jointAngles;
-    if (!ja || !this.realPoser) return;
+    const j = sample && sample.jointAngles;
+    if (!j || !this.realPoser) return;
+    // Nếu một chuyển động bị NGƯỢC trên phần cứng của bạn, đổi dấu đúng dòng đó.
     this.realPoser.poseFromAngles({
-      lFlex: ja.leftShoulderFlexion,  lAbd: ja.leftShoulderAbduction,
-      lElbow: ja.leftElbowFlexion,    lWrist: ja.leftWristFlexion,
-      rFlex: ja.rightShoulderFlexion, rAbd: ja.rightShoulderAbduction,
-      rElbow: ja.rightElbowFlexion,   rWrist: ja.rightWristFlexion,
+      lFlex:   j.leftShoulderFlexion    || 0,
+      lAbd:    j.leftShoulderAbduction  || 0,
+      lElbow:  j.leftElbowFlexion       || 0,
+      lProSup: j.leftForearmProSup      || 0,
+      rFlex:   j.rightShoulderFlexion   || 0,
+      rAbd:    j.rightShoulderAbduction || 0,
+      rElbow:  j.rightElbowFlexion      || 0,
+      rProSup: j.rightForearmProSup     || 0,
     }, 0.35);
-  }
-
-  /**
-   * Chuyển Euler (roll/pitch/yaw, degrees) → Quaternion
-   * YXZ là convention chuẩn cho ZYX Euler (Madgwick output)
-   * Nếu tay xoay sai hướng: đổi thành 'XYZ', 'ZYX', 'XZY', 'ZXY'
-   */
-  _imuToQuaternion({ roll, pitch, yaw }) {
-    const D = Math.PI / 180;
-    return new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(pitch * D, yaw * D, roll * D, 'YXZ')
-    );
   }
 
   /**

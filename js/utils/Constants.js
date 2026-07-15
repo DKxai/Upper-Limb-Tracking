@@ -10,6 +10,11 @@ export const SENSOR_CONFIG = {
   NUM_SENSORS: 6,         // 6 MPU6050 nodes
 };
 
+// ── Trục xương trong hệ tọa độ cảm biến ──
+// Hướng từ khớp gần (proximal) đến khớp xa (distal), ví dụ: vai → khuỷu.
+// Điều chỉnh theo cách đeo thực tế: [1,0,0] nếu trục X dọc xương hướng ra xa thân.
+export const BONE_AXIS = [1, 0, 0];
+
 // ── Sensor Segments (6 nodes - Dual Arm Setup) ──
 export const ArmSegment = Object.freeze({
   LEFT_UPPER_ARM: 'left_upper_arm',
@@ -80,8 +85,13 @@ export const NORMAL_ROM = {
   shoulder_flexion: { min: 0, max: 180, label: 'Shoulder Flexion' },
   shoulder_extension: { min: 0, max: 60, label: 'Shoulder Extension' },
   shoulder_abduction: { min: 0, max: 180, label: 'Shoulder Abduction' },
+  shoulder_elevation: { min: 0, max: 180, label: 'Shoulder Elevation' },
+  shoulder_int_rotation: { min: 0, max: 70, label: 'Shoulder Int. Rotation' },
+  shoulder_ext_rotation: { min: 0, max: 90, label: 'Shoulder Ext. Rotation' },
   elbow_flexion: { min: 0, max: 150, label: 'Elbow Flexion' },
   elbow_extension: { min: 0, max: 10, label: 'Elbow Extension' },
+  forearm_pronation: { min: 0, max: 85, label: 'Forearm Pronation' },
+  forearm_supination: { min: 0, max: 90, label: 'Forearm Supination' },
   wrist_flexion: { min: 0, max: 80, label: 'Wrist Flexion' },
   wrist_extension: { min: 0, max: 70, label: 'Wrist Extension' },
   wrist_radial: { min: 0, max: 20, label: 'Wrist Radial Dev.' },

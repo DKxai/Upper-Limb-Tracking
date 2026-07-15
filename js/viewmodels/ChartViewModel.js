@@ -294,31 +294,34 @@ export class ChartViewModel {
   }
 
   /**
-   * All joint angles of ONE arm over time (shoulder flexion/abduction, elbow
-   * flexion, wrist flexion/deviation) — used to split the overview chart per arm
-   * instead of lumping only the main flexion angles together.
+   * Basic joint angles of ONE arm over time — CHỈ 3 khớp cơ bản (vai, khuỷu,
+   * cổ tay) cho trang Tổng quan, và là ĐÚNG các đại lượng model 3D hiển thị
+   * để số liệu ↔ model không lệch nhau:
+   *  - Vai = ELEVATION (góc nâng 3D thật, 0–180) = độ cao tay trên model;
+   *  - Khuỷu = elbow flexion (0–180) = góc gập khuỷu trên model;
+   *  - Cổ tay = xoay sấp/ngửa cẳng tay (±) = twist cẳng tay trên model
+   *    (cảm biến đeo ở cổ tay → không có "gập bàn tay" để hiển thị).
    * @param {'left'|'right'} side
    * @returns {{ labels: number[], datasets: Object[] }}
    */
   getArmJointAnglesData(side) {
     const session = this._session;
     const p = side === 'left' ? 'left' : 'right';
-    const cap = side === 'left' ? 'L' : 'R';
-    const colors = ['#3b82f6', '#22c55e', '#06b6d4', '#a855f7', '#f97316'];
+    const colors = p === 'left'
+      ? ['#3b82f6', '#06b6d4', '#8b5cf6']   // đồng bộ màu node tay trái
+      : ['#ef4444', '#f97316', '#eab308'];  // đồng bộ màu node tay phải
     const defs = [
-      [`${cap}-Shoulder Flexion`, `jointAngles.${p}ShoulderFlexion`],
-      [`${cap}-Shoulder Abduction`, `jointAngles.${p}ShoulderAbduction`],
-      [`${cap}-Elbow Flexion`, `jointAngles.${p}ElbowFlexion`],
-      [`${cap}-Wrist Flexion`, `jointAngles.${p}WristFlexion`],
-      [`${cap}-Wrist Deviation`, `jointAngles.${p}WristDeviation`],
+      ['Vai (nâng)', `jointAngles.${p}ShoulderElevation`],
+      ['Khuỷu', `jointAngles.${p}ElbowFlexion`],
+      ['Cổ tay (xoay)', `jointAngles.${p}ForearmProSup`],
     ];
     return {
       labels: this.getLabels(),
       datasets: defs.map(([label, path], i) => ({
         label,
         data: session.getTimeSeries(path, this._win()),
-        borderColor: colors[i],
-        backgroundColor: colors[i] + '20',
+        borderColor: colors[i % colors.length],
+        backgroundColor: colors[i % colors.length] + '20',
       })),
     };
   }
@@ -439,24 +442,28 @@ export class ChartViewModel {
    * @returns {{ labels: string[], datasets: Object[] }}
    */
   getROMData() {
+    // Chỉ 3 khớp cơ bản mỗi tay — CÙNG đại lượng với chart Tổng quan & model 3D:
+    // Vai = elevation, Khuỷu = flexion, Cổ tay = xoay sấp/ngửa (normal 85°).
     const rom = this._session.getROM();
     return {
-      labels: ['L-Shoulder', 'L-Elbow', 'R-Shoulder', 'R-Elbow'],
+      labels: ['Vai trái', 'Khuỷu trái', 'Cổ tay trái', 'Vai phải', 'Khuỷu phải', 'Cổ tay phải'],
       datasets: [
         {
-          label: 'Measured ROM (°)',
+          label: 'ROM đạt được (°)',
           data: [
-            rom.leftShoulderFlexion || 0,
+            rom.leftShoulderElevation || 0,
             rom.leftElbowFlexion || 0,
-            rom.rightShoulderFlexion || 0,
+            rom.leftForearmProSup || 0,
+            rom.rightShoulderElevation || 0,
             rom.rightElbowFlexion || 0,
+            rom.rightForearmProSup || 0,
           ],
-          backgroundColor: ['#3b82f6', '#06b6d4', '#ef4444', '#f97316'],
+          backgroundColor: ['#3b82f6', '#06b6d4', '#8b5cf6', '#ef4444', '#f97316', '#eab308'],
           borderRadius: 6,
         },
         {
-          label: 'Normal ROM (°)',
-          data: [180, 150, 180, 150],
+          label: 'Bình thường (°)',
+          data: [180, 150, 85, 180, 150, 85],
           backgroundColor: 'rgba(148, 163, 184, 0.2)',
           borderRadius: 6,
         },
@@ -506,9 +513,12 @@ export class ChartViewModel {
     }
 
     return {
-      leftShoulderAngle: latest.jointAngles.leftShoulderFlexion || 0,
+      // Vai = ELEVATION (góc nâng tay 3D thật, 0–180) — trùng khớp 1:1 với độ
+      // cao cánh tay trên model 3D (model dựng hướng tay từ hypot(flex,abd) =
+      // elevation). Dùng flexion ở đây sẽ lệch với model khi tay nâng chéo.
+      leftShoulderAngle: latest.jointAngles.leftShoulderElevation || 0,
       leftElbowAngle: latest.jointAngles.leftElbowFlexion || 0,
-      rightShoulderAngle: latest.jointAngles.rightShoulderFlexion || 0,
+      rightShoulderAngle: latest.jointAngles.rightShoulderElevation || 0,
       rightElbowAngle: latest.jointAngles.rightElbowFlexion || 0,
       sampleRate: stats.actualRate,
     };

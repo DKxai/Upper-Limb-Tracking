@@ -66,12 +66,34 @@ export class JointAngles {
     this.leftElbowFlexion = 0;
     this.leftWristFlexion = 0;
     this.leftWristDeviation = 0;
-    
+
     this.rightShoulderFlexion = 0;
     this.rightShoulderAbduction = 0;
     this.rightElbowFlexion = 0;
     this.rightWristFlexion = 0;
     this.rightWristDeviation = 0;
+
+    // ── Thông số mới: chuyển động 3D đầy đủ ──
+
+    // Total Elevation: góc thực giữa cánh tay và phương thẳng đứng (0–180°)
+    // Chính xác cho MỌI hướng: trước, bên, chéo — không bị bão hòa ±90° như Euler
+    this.leftShoulderElevation = 0;
+    this.rightShoulderElevation = 0;
+
+    // Elevation Plane: hướng nâng tay (0° = flexion/ra trước, 90° = abduction/sang bên)
+    // ~45° = scaption (mặt phẳng xương bả vai — tư thế đo lâm sàng phổ biến)
+    this.leftShoulderPlane = 0;
+    this.rightShoulderPlane = 0;
+
+    // Internal/External Rotation: xoay quanh trục dọc cánh tay trên (swing–twist)
+    // Đáng tin khi elevation > ~30°; gần 0° thì trôi do trục trùng trọng lực
+    this.leftShoulderRotation = 0;
+    this.rightShoulderRotation = 0;
+
+    // Pronation/Supination: xoay cẳng tay quanh trục dọc (swing–twist of forearm)
+    // Đo tốt khi khuỷu gập ~90° (trục nằm ngang, trọng lực quan sát được)
+    this.leftForearmProSup = 0;
+    this.rightForearmProSup = 0;
   }
 }
 

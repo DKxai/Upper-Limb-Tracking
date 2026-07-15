@@ -7,7 +7,7 @@
  */
 
 import { Orientation, JointAngles, IMUReading } from '../models/SensorData.js';
-import { ArmSegment, FUSION_CONFIG, SEGMENT_BY_INDEX } from '../utils/Constants.js';
+import { ArmSegment, FUSION_CONFIG, SEGMENT_BY_INDEX, BONE_AXIS } from '../utils/Constants.js';
 import { MathUtils } from '../utils/MathUtils.js';
 import { Madgwick6DOF, DEG_TO_RAD } from './MadgwickFilter.js';
 import { applyCalibration, LOCAL_G } from '../utils/CalibrationData.js';
@@ -45,6 +45,9 @@ class FusionState {
 
     // Node ID for calibration lookup (set externally)
     this.nodeId = null;
+
+    // Cache the last read accelerometer values for use at the end of calibration
+    this.lastAccel = { ax: 0, ay: 0, az: 1 };
   }
 
   /**
@@ -54,6 +57,9 @@ class FusionState {
    */
   addCalibrationSample(reading) {
     this.calibrationSamples.push({ gx: reading.gx, gy: reading.gy, gz: reading.gz });
+    this.lastAccel.ax = reading.ax;
+    this.lastAccel.ay = reading.ay;
+    this.lastAccel.az = reading.az;
 
     if (this.calibrationSamples.length >= FUSION_CONFIG.CALIBRATION_SAMPLES) {
       // Calculate average gyro bias
@@ -222,10 +228,21 @@ export class SensorFusion {
       for (const segment of activeSegments) {
         const state = this._states[segment];
         const reading = readings[segment];
-        if (!reading) continue;
-        const cal = this._calibrate(state, reading);
-        const refRoll = MathUtils.accelRoll(cal.ay, cal.az);
-        const refPitch = MathUtils.accelPitch(cal.ax, cal.ay, cal.az);
+        
+        let ax, ay, az;
+        if (reading) {
+          const cal = this._calibrate(state, reading);
+          ax = cal.ax;
+          ay = cal.ay;
+          az = cal.az;
+        } else {
+          ax = state.lastAccel.ax;
+          ay = state.lastAccel.ay;
+          az = state.lastAccel.az;
+        }
+
+        const refRoll = MathUtils.accelRoll(ay, az);
+        const refPitch = MathUtils.accelPitch(ax, ay, az);
         state.offsetRoll = refRoll;
         state.offsetPitch = refPitch;
         state.offsetYaw = 0; // yaw is relative (no magnetometer) → reference is 0
@@ -370,7 +387,7 @@ export class SensorFusion {
     // Compute joint angles from the per-segment (neutral-relative) quaternions
     const jointAngles = this._computeJointAnglesFromQuats(corrQuats);
 
-    return { orientations, jointAngles, calibrated };
+    return { orientations, jointAngles, calibrated, quaternions: corrQuats };
   }
 
   /**
@@ -413,14 +430,24 @@ export class SensorFusion {
   /**
    * Compute joint angles from per-segment (neutral-relative) quaternions.
    *
-   * A joint angle is the rotation of the child segment relative to its parent:
-   * q_rel = q_parent⁻¹ ⊗ q_child, read out as Euler. This composes rotations
-   * correctly — unlike subtracting two segments' Euler angles, which only works
-   * for pure in-plane motion and breaks near gimbal lock. At the calibrated
-   * neutral pose every q is identity, so all joints read 0.
+   * ĐÃ SỬA các lỗi quan trọng:
    *
-   * Conventions are preserved from the previous implementation: pitch = flexion,
-   * yaw = deviation; shoulder uses |·| (magnitude) and elbow is clamped ≥0.
+   * FIX 1 — Elbow flexion dùng angleBetweenDeg(vU, vF) thay vì Euler pitch.
+   *   Euler pitch = asin(...) BÃO HÒA ở ±90° → khuỷu gập 120° hiển thị 60°.
+   *   angleBetween dùng acos(dot) → phạm vi 0–180°, đúng mọi góc.
+   *
+   * FIX 2 — Shoulder Total Elevation + Plane of Elevation.
+   *   Đo chuyển động chéo (scaption) chính xác.
+   *
+   * FIX 3 — Wrist: swing–twist tách pro/sup khỏi flexion/deviation.
+   *
+   * FIX 4 — Pronation/Supination = twist(q_rel(upper→forearm)).
+   *
+   * FIX 5 — Shoulder Int/Ext Rotation = twist(q_upper_arm).
+   *
+   * FIX 6 — Shoulder flexion giữ dấu (bỏ Math.abs), phân biệt
+   *   flexion (+) vs extension (−).
+   *
    * @param {Object.<string, number[]>} q - segment → quaternion [w,x,y,z]
    * @returns {JointAngles}
    * @private
@@ -431,35 +458,75 @@ export class SensorFusion {
 
     const angles = new JointAngles();
     const r1 = (x) => MathUtils.roundTo(x, 1);
-    const eul = (qq) => Quaternion.toEulerDeg(qq);
     const rel = (parent, child) => Quaternion.multiply(Quaternion.conjugate(parent), child);
+    const R2D = 180 / Math.PI;
 
     // --- Tay Trái (Left Arm) ---
     if (lu) {
-      const e = eul(lu);
-      angles.leftShoulderFlexion = r1(Math.abs(e.pitch));
-      angles.leftShoulderAbduction = r1(Math.abs(e.roll));
+      // FIX 2 — Shoulder: hướng cánh tay trong không gian 3D
+      const vArm = Quaternion.rotateVector(lu, BONE_AXIS);
+      const elev = Quaternion.angleBetweenDeg(vArm, BONE_AXIS);
+      const planeRad = Math.atan2(vArm[1], vArm[2]);
+      angles.leftShoulderElevation = r1(elev);
+      angles.leftShoulderPlane = r1(planeRad * R2D);
+      // FIX 7 — Flexion/Abduction = phân rã hình học (elevation, plane), KHÔNG
+      // dùng Euler pitch/roll của swing. Đường Euler cũ hỏng khi dùng thật:
+      //  (a) pitch NGƯỢC DẤU (gập 60° đọc −60° → model 3D quay ra sau);
+      //  (b) asin bão hòa ±90°: gập 120° đọc −60° + roll nhảy 180° → model
+      //      lộn/bẻ tay ngay khi tay vượt ngang vai;
+      //  (c) dạng vai thuần đọc ≈ 0 vì roll của swing (đã tách twist) luôn ≈ 0.
+      // Phân rã: flexion = elev·cos(plane), abduction = elev·sin(plane) —
+      // liên tục 0–180°, giữ dấu (plane ngoài ±90° ⇒ thành phần duỗi/khép âm).
+      // (Đã kiểm chứng bằng test quaternion tổng hợp: flex 60/120, abd 90,
+      //  ext −30, scaption 45° — xem test_joint_angles.mjs.)
+      angles.leftShoulderFlexion = r1(elev * Math.cos(planeRad));
+      angles.leftShoulderAbduction = r1(elev * Math.sin(planeRad));
+      // FIX 5 — Int/Ext Rotation
+      const { angleDeg: intExtRot } = Quaternion.swingTwist(lu, BONE_AXIS);
+      angles.leftShoulderRotation = r1(intExtRot);
     }
     if (lu && lf) {
-      angles.leftElbowFlexion = r1(Math.max(0, eul(rel(lu, lf)).pitch));
+      // FIX 1 — Elbow: angle-between bone axes (0–180°, KHÔNG bão hòa ±90°)
+      const vU = Quaternion.rotateVector(lu, BONE_AXIS);
+      const vF = Quaternion.rotateVector(lf, BONE_AXIS);
+      angles.leftElbowFlexion = r1(Quaternion.angleBetweenDeg(vU, vF));
+      // FIX 4 — Pronation/Supination
+      const { angleDeg: proSup } = Quaternion.swingTwist(rel(lu, lf), BONE_AXIS);
+      angles.leftForearmProSup = r1(proSup);
     }
     if (lf && lw) {
-      const e = eul(rel(lf, lw));
+      // FIX 3 — Wrist: swing–twist tách xoay cẳng tay khỏi flex/dev
+      const qRel = rel(lf, lw);
+      const { swing } = Quaternion.swingTwist(qRel, BONE_AXIS);
+      const e = Quaternion.toEulerDeg(swing);
       angles.leftWristFlexion = r1(e.pitch);
       angles.leftWristDeviation = r1(this._leakDeviation('left', e.yaw));
     }
 
     // --- Tay Phải (Right Arm) ---
     if (ru) {
-      const e = eul(ru);
-      angles.rightShoulderFlexion = r1(Math.abs(e.pitch));
-      angles.rightShoulderAbduction = r1(Math.abs(e.roll));
+      // FIX 7 — như tay trái: phân rã (elevation, plane), không dùng Euler swing
+      const vArm = Quaternion.rotateVector(ru, BONE_AXIS);
+      const elev = Quaternion.angleBetweenDeg(vArm, BONE_AXIS);
+      const planeRad = Math.atan2(vArm[1], vArm[2]);
+      angles.rightShoulderElevation = r1(elev);
+      angles.rightShoulderPlane = r1(planeRad * R2D);
+      angles.rightShoulderFlexion = r1(elev * Math.cos(planeRad));
+      angles.rightShoulderAbduction = r1(elev * Math.sin(planeRad));
+      const { angleDeg: intExtRot } = Quaternion.swingTwist(ru, BONE_AXIS);
+      angles.rightShoulderRotation = r1(intExtRot);
     }
     if (ru && rf) {
-      angles.rightElbowFlexion = r1(Math.max(0, eul(rel(ru, rf)).pitch));
+      const vU = Quaternion.rotateVector(ru, BONE_AXIS);
+      const vF = Quaternion.rotateVector(rf, BONE_AXIS);
+      angles.rightElbowFlexion = r1(Quaternion.angleBetweenDeg(vU, vF));
+      const { angleDeg: proSup } = Quaternion.swingTwist(rel(ru, rf), BONE_AXIS);
+      angles.rightForearmProSup = r1(proSup);
     }
     if (rf && rw) {
-      const e = eul(rel(rf, rw));
+      const qRel = rel(rf, rw);
+      const { swing } = Quaternion.swingTwist(qRel, BONE_AXIS);
+      const e = Quaternion.toEulerDeg(swing);
       angles.rightWristFlexion = r1(e.pitch);
       angles.rightWristDeviation = r1(this._leakDeviation('right', e.yaw));
     }
@@ -494,7 +561,8 @@ export class SensorFusion {
     for (const [seg, o] of Object.entries(orientations)) {
       if (o) q[seg] = Quaternion.fromEulerDeg(o.roll, o.pitch, o.yaw);
     }
-    return this._computeJointAnglesFromQuats(q);
+    const jointAngles = this._computeJointAnglesFromQuats(q);
+    return { jointAngles, quaternions: q };
   }
 
   /**

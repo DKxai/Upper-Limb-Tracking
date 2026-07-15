@@ -131,7 +131,7 @@ export class DataProcessingViewModel {
     }
 
     // Compute joint angles from orientations
-    const jointAngles = this.fusion.computeJointAngles(orientations);
+    const { jointAngles, quaternions } = this.fusion.computeJointAngles(orientations);
 
     // Create sample (raw data will be empty IMUReading defaults)
     const sample = new SensorDataSample(
@@ -141,6 +141,7 @@ export class DataProcessingViewModel {
       orientations,
       jointAngles
     );
+    sample.quaternions = quaternions;
 
     // Store and emit
     this.session.addSample(sample);
@@ -171,7 +172,7 @@ export class DataProcessingViewModel {
     }
 
     // Step 5: Sensor fusion (Madgwick) — pass the frame timestamp for real Δt
-    const { orientations, jointAngles } = this.fusion.process(readings, parsed.timestamp);
+    const { orientations, jointAngles, quaternions } = this.fusion.process(readings, parsed.timestamp);
 
     // Step 6: Create complete sample
     const sample = new SensorDataSample(
@@ -181,6 +182,7 @@ export class DataProcessingViewModel {
       orientations,
       jointAngles
     );
+    sample.quaternions = quaternions;
 
     // Step 7: Store in session
     this.session.addSample(sample);
@@ -237,11 +239,12 @@ export class DataProcessingViewModel {
     let readings = parsed.readings;
     if (this._lowPassEnabled) readings = this._applyLowPass(readings);
 
-    const { orientations, jointAngles, calibrated } = this.fusion.process(readings, parsed.timestamp);
+    const { orientations, jointAngles, calibrated, quaternions } = this.fusion.process(readings, parsed.timestamp);
     const sample = new SensorDataSample(
       relativeTime, this._frameCounter++,
       readings, orientations, jointAngles, calibrated
     );
+    sample.quaternions = quaternions;
 
     this.session.addSample(sample);
     eventBus.emit(Events.PROCESSED_DATA_READY, sample);

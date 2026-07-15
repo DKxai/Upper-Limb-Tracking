@@ -6,6 +6,16 @@
 
 import { eventBus } from '../utils/EventBus.js';
 import { Events, ArmSegment, SEGMENT_COLORS } from '../utils/Constants.js';
+import * as THREE from 'three';
+
+// Ánh xạ trục IMU → trục Three.js
+const SENSOR_TO_WORLD = new THREE.Quaternion().setFromRotationMatrix(
+  new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, -1, 0),   // IMU X
+    new THREE.Vector3(1, 0, 0),    // IMU Y
+    new THREE.Vector3(0, 0, 1)     // IMU Z
+  )
+);
 
 export class Arm3DView {
   constructor(containerId) {
@@ -157,48 +167,63 @@ export class Arm3DView {
   // ═══════════════════════════════════════
 
   _createArmModels() {
-    const segments = [
-      { key: ArmSegment.LEFT_UPPER_ARM, length: 3, pos: [-2.5, 2, 0] },
-      { key: ArmSegment.LEFT_FOREARM, length: 2.5, pos: [-2.5, -1, 0] },
-      { key: ArmSegment.LEFT_WRIST, length: 0.8, pos: [-2.5, -3.5, 0] },
+    const buildArm = (sideStr, offsetX) => {
+      const upperKey = ArmSegment[`${sideStr}_UPPER_ARM`];
+      const forearmKey = ArmSegment[`${sideStr}_FOREARM`];
+      const wristKey = ArmSegment[`${sideStr}_WRIST`];
 
-      { key: ArmSegment.RIGHT_UPPER_ARM, length: 3, pos: [2.5, 2, 0] },
-      { key: ArmSegment.RIGHT_FOREARM, length: 2.5, pos: [2.5, -1, 0] },
-      { key: ArmSegment.RIGHT_WRIST, length: 0.8, pos: [2.5, -3.5, 0] },
-    ];
+      const createSegment = (key, length) => {
+        const group = new THREE.Group();
+        
+        const geometry = new THREE.CylinderGeometry(0.15, 0.15, length, 12);
+        const material = new THREE.MeshPhongMaterial({
+          color: SEGMENT_COLORS[key],
+          emissive: SEGMENT_COLORS[key],
+          emissiveIntensity: 0.2,
+          shininess: 30
+        });
+        const cylinder = new THREE.Mesh(geometry, material);
+        cylinder.position.y = -length / 2; // Pivot at the top
+        cylinder.castShadow = true;
+        cylinder.receiveShadow = true;
+        group.add(cylinder);
 
-    segments.forEach(seg => {
-      const group = new THREE.Group();
-      group.position.set(...seg.pos);
+        const jointGeometry = new THREE.SphereGeometry(0.2, 16, 16);
+        const jointMaterial = new THREE.MeshPhongMaterial({
+          color: 0xffffff,
+          emissive: SEGMENT_COLORS[key],
+          emissiveIntensity: 0.3
+        });
+        const joint = new THREE.Mesh(jointGeometry, jointMaterial);
+        joint.castShadow = true;
+        group.add(joint); // Joint at 0,0,0 (pivot point)
 
-      // Cylinder for limb
-      const geometry = new THREE.CylinderGeometry(0.15, 0.15, seg.length, 12);
-      const material = new THREE.MeshPhongMaterial({
-        color: SEGMENT_COLORS[seg.key],
-        emissive: SEGMENT_COLORS[seg.key],
-        emissiveIntensity: 0.2,
-        shininess: 30
-      });
-      const cylinder = new THREE.Mesh(geometry, material);
-      cylinder.castShadow = true;
-      cylinder.receiveShadow = true;
-      group.add(cylinder);
+        this.armModels[key] = { group, cylinder, joint, length, initialWorldQuat: new THREE.Quaternion() };
+        return group;
+      };
 
-      // Sphere at joint (top)
-      const jointGeometry = new THREE.SphereGeometry(0.2, 16, 16);
-      const jointMaterial = new THREE.MeshPhongMaterial({
-        color: 0xffffff,
-        emissive: SEGMENT_COLORS[seg.key],
-        emissiveIntensity: 0.3
-      });
-      const joint = new THREE.Mesh(jointGeometry, jointMaterial);
-      joint.position.y = seg.length / 2;
-      joint.castShadow = true;
-      group.add(joint);
+      const upper = createSegment(upperKey, 3);
+      upper.position.set(offsetX, 2, 0); // Root position
+      
+      const forearm = createSegment(forearmKey, 2.5);
+      forearm.position.set(0, -3, 0); // At the bottom of upper arm
+      upper.add(forearm);
 
-      this.scene.add(group);
-      this.armModels[seg.key] = { group, cylinder, joint, length: seg.length };
-    });
+      const wrist = createSegment(wristKey, 0.8);
+      wrist.position.set(0, -2.5, 0); // At the bottom of forearm
+      forearm.add(wrist);
+
+      this.scene.add(upper);
+    };
+
+    buildArm('LEFT', -2.5);
+    buildArm('RIGHT', 2.5);
+
+    // Force matrix update to compute initial world quaternions
+    this.scene.updateMatrixWorld(true);
+    for (const key of Object.keys(this.armModels)) {
+      this.armModels[key].group.getWorldQuaternion(this.armModels[key].initialWorldQuat);
+    }
   }
 
   // ═══════════════════════════════════════
@@ -501,20 +526,56 @@ export class Arm3DView {
    * @param {{orientation: Object}} sample
    */
   poseFromSample(sample) {
-    if (sample && sample.orientation) this._updateArmPose(sample);
+    if (sample && (sample.quaternions || sample.orientation)) this._updateArmPose(sample);
   }
 
   _updateArmPose(sample) {
-    Object.entries(sample.orientation).forEach(([segmentKey, orientation]) => {
-      const model = this.armModels[segmentKey];
-      if (!model || !orientation) return;
+    const qs = sample && sample.quaternions;
+    if (!qs) {
+      // Fallback cho chế độ cũ (orientation góc Euler) nếu cần giữ compatibility
+      if (sample && sample.orientation) {
+        Object.entries(sample.orientation).forEach(([segmentKey, orientation]) => {
+          // Wrist đi cứng theo forearm (cảm biến ở cổ tay ≠ bàn tay — xem trên)
+          if (segmentKey === ArmSegment.LEFT_WRIST || segmentKey === ArmSegment.RIGHT_WRIST) return;
+          const model = this.armModels[segmentKey];
+          if (!model || !orientation) return;
+          const roll = orientation.roll * Math.PI / 180;
+          const pitch = orientation.pitch * Math.PI / 180;
+          const yaw = orientation.yaw * Math.PI / 180;
+          model.group.rotation.set(pitch, yaw, roll);
+        });
+      }
+      return;
+    }
 
-      const roll = orientation.roll * Math.PI / 180;
-      const pitch = orientation.pitch * Math.PI / 180;
-      const yaw = orientation.yaw * Math.PI / 180;
+    const inv = SENSOR_TO_WORLD.clone().invert();
+    // Cảm biến "cổ tay" gắn ở ĐẦU XA CẲNG TAY (không phải bàn tay) → không lái
+    // đốt wrist riêng (nhiễu tương đối forearm↔wrist làm gãy/bẻ cổ tay giả);
+    // đốt wrist đi cứng theo forearm.
+    const order = [
+      ArmSegment.LEFT_UPPER_ARM, ArmSegment.LEFT_FOREARM,
+      ArmSegment.RIGHT_UPPER_ARM, ArmSegment.RIGHT_FOREARM
+    ];
 
-      model.group.rotation.set(pitch, yaw, roll);
-    });
+    for (const seg of order) {
+      const q = qs[seg];
+      const model = this.armModels[seg];
+      if (!q || !model) continue;
+
+      const group = model.group;
+      const qImu = new THREE.Quaternion(q[1], q[2], q[3], q[0]);
+      const qWorldRot = SENSOR_TO_WORLD.clone().multiply(qImu).multiply(inv);
+      const targetWorld = qWorldRot.multiply(model.initialWorldQuat.clone());
+
+      if (group.parent && group.parent !== this.scene) {
+        group.parent.updateWorldMatrix(true, false);
+        const pq = new THREE.Quaternion();
+        group.parent.getWorldQuaternion(pq);
+        group.quaternion.slerp(pq.invert().multiply(targetWorld), 0.5);
+      } else {
+        group.quaternion.slerp(targetWorld, 0.5);
+      }
+    }
   }
 
   // ═══════════════════════════════════════

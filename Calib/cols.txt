@@ -1,0 +1,22 @@
+Index(['KẾT QUẢ HIỆU CHUẨN ACCEL (mô hình a = S (ã − B))', 'Unnamed: 1',
+       'Unnamed: 2', 'Unnamed: 3'],
+      dtype='str')
+  KẾT QUẢ HIỆU CHUẨN ACCEL (mô hình a = S (ã − B))  ... Unnamed: 3
+0                                              NaN  ...        NaN
+1                             S (ma trận đối xứng)  ...      col Z
+2                                            row X  ...   0.003032
+3                                            row Y  ...  -0.000519
+4                                            row Z  ...   0.981801
+
+[5 rows x 4 columns]
+Index(['KẾT QUẢ HIỆU CHUẨN GYRO (mô hình g = K ⊙ (m + bias))', 'Unnamed: 1',
+       'Unnamed: 2', 'Unnamed: 3', 'Unnamed: 4'],
+      dtype='str')
+  KẾT QUẢ HIỆU CHUẨN GYRO (mô hình g = K ⊙ (m + bias))  ... Unnamed: 4
+0                                                NaN    ...        NaN
+1                                               Trục    ...        NaN
+2                                                  X    ...        NaN
+3                                                  Y    ...        NaN
+4                                                  Z    ...        NaN
+
+[5 rows x 5 columns]
